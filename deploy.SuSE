@@ -1,0 +1,28 @@
+NOTE: yawn currently requires the latest pywbem from svn.
+1.  cd /usr/lib/python/site-packages
+2.  svn co https://svn.sourceforge.net/svnroot/pywbem/trunk pywbem
+
+To deploy on SuSE 10: 
+
+1. Enable mod_python in apache.  This can be done with YaST.  Run 
+   'yast2 http-server', and check "Enable Python Scripting".  Alternatively, 
+   edit /etc/sysconfig/apache2, and add "python" to the list of 
+   APACHE_MODULES.  If you don't use YaST, make sure the apache2-mod_python
+   package is installed (YaST will do this for you). 
+2. Install the python-xml RPM from the SUSE media. 
+3. It is a good idea to enable SSL also in apache
+   - cd /usr/share/doc/packages/apache2; ./certificate.sh
+   - Add "SSL" to APACHE_SERVER_FLAGS in /etc/sysconfig/apache2
+   - cd /etc/apache2/vhosts.d; mv vhost-ssl.template vhost-ssl.conf
+   - Add "ssl" to APACHE_MODULES in /etc/sysconfig/apache2
+4. Create the file /etc/apache2/conf.d/cim.conf containing the following:
+   <Directory /srv/www/htdocs/cim>
+        SetHandler mod_python
+        PythonHandler mod_python.publisher
+        PythonDebug On
+   </Directory>
+5. Install (copy) yawn.py to /srv/www/htdocs/cim/index.py
+6. Restart apache2
+
+Now point your web browser to http://<server>/cim
+
