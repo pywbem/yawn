@@ -29,7 +29,6 @@
 # @author Norm Paxton <npaxton@novell.com>
 
 from mod_python import Cookie, apache
-from datetime import timedelta
 import pywbem
 import cgi
 import types
@@ -67,29 +66,6 @@ def _val2str(x):
                 rval+= strItem
         rval+= '}'
         return cgi.escape(rval)
-    elif type(x) == timedelta:
-        #http://msdn2.microsoft.com/en-us/library/aa387237.aspx
-        #http://msdn2.microsoft.com/en-us/library/aa390895.aspx
-        mss = str(x.microseconds)
-        while len(mss) < 6:
-            mss = '0' + mss
-        hours = x.seconds / (60*60)
-        mins = x.seconds % (60*60) / 60
-        secs = x.seconds % 60
-        hours = str(hours)
-        mins = str(mins)
-        secs = str(secs) 
-        if len(hours) < 2:
-            hours  = '0' + hours
-        if len(mins) < 2:
-            mins = '0' + mins
-        if len(secs) < 2:
-            secs = '0' + secs
-        days = str(x.days)
-        while len(days) < 8:
-            days = '0'+days 
-        return cgi.escape(days + hours + mins + secs + '.' + mss + ':000')
-                
     else:
         return cgi.escape(str(x))
 
