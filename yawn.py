@@ -1283,13 +1283,9 @@ def GetClass(req, url, ns, className):
     ht+= ' or '+_makeHref(req, 'EnumInstances', instUrlArgs, 'Instances')
     ht+= ' or '+_makeHref(req, 'AssociatedClasses', instUrlArgs, 'Associated Classes')
     ht+= ' of this class.'
-    try:
-        # see if code generator is available
-        from pycim import codegen 
+    if hasattr(pywbem, 'codegen'):
         ht+= ' &nbsp;'+ _makeHref(req, 
                    'Provider', instUrlArgs, 'Python Provider')
-    except ImportError:
-        pass
     ht+= '</div>'
     ht+= '<table border="1" cellpadding="2">'
     if klass.qualifiers.has_key('aggregation'):
@@ -1937,8 +1933,7 @@ def Provider(req, url, ns, className):
     conn = _frontMatter(req, url, ns)
     klass = _ex(req, conn.GetClass, ClassName = className, LocalOnly = "false", 
                 IncludeClassOrigin = "true")
-    from pycim import codegen
-    code, mof = codegen(klass)
+    code, mof = pywbem.codegen(klass)
     title = 'Python Provider for %s' % className
     ht = _printHead(title, req)
     ht+= '<font size=+1><b>%s</b></font>' % title
