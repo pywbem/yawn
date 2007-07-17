@@ -690,9 +690,14 @@ def EnumInstances(req, url, ns, className):
         msgStart = ''
     ht+= msgStart
     req.write(ht)
+    ccache = pywbem.NocaseDict()
     for inst in insts:
         instName = inst.path
-        klass = conn.GetClass(instName.classname, LocalOnly = "false")
+        try:
+            klass = ccache[instName.classname]
+        except KeyError:
+            klass = conn.GetClass(instName.classname, LocalOnly = "false")
+            ccache[instName.classname] = klass
         req.write(_displayInstance(req, inst, instName, klass, urlargs.copy()))
     return '</body></html>'
 
