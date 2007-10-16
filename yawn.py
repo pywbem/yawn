@@ -1825,13 +1825,15 @@ def EnumNamespaces(req, url):
     nsinsts = []
     try:
         for nsclass in ['CIM_Namespace', '__Namespace']:
-            for interopns in ['Interop', 'root', 'root/cimv2']:
+            for interopns in ['Interop', 'interop', 'root', 'root/cimv2']:
                 try:
                     nsinsts = conn.EnumerateInstanceNames(nsclass, namespace = interopns)
                 except pywbem.cim_http.AuthError, arg:
                     raise apache.SERVER_RETURN, apache.HTTP_UNAUTHORIZED
                 except pywbem.CIMError, arg:
-                    if arg[0] == pywbem.CIM_ERR_INVALID_NAMESPACE or arg[0] == pywbem.CIM_ERR_INVALID_CLASS:
+                    if arg[0] in [pywbem.CIM_ERR_INVALID_NAMESPACE,
+                                  pywbem.CIM_ERR_NOT_SUPPORTED,
+                                  pywbem.CIM_ERR_INVALID_CLASS]:
                         continue
                     else:
                         raise
