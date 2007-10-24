@@ -720,7 +720,9 @@ def _createOrModifyInstance(req, conn, url, ns, className, instName, **params):
             dt = metaProp.reference_class
         else:
             dt = metaProp.type
-        if propVal:
+        if not propVal:
+            inst.update_existing([(propName,None)])
+        else:
             if metaProp.reference_class is not None:
                 inst.properties[propName] = _decodeObject(propVal)
             else:
