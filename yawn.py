@@ -381,7 +381,7 @@ def FilteredReferenceNames(req, url, ns, instPath, assocClass, resultClass,
                 klass = _ex(req,conn.GetClass,ClassName=assocInstPath.classname, LocalOnly = False, IncludeQualifiers = True)
                 req.write(_displayInstance(req, assocInst, assocInstPath, klass, urlargs))
         elif  assocCall=='Reference Names':
-            refNames = conn.ReferenceNames(instName, **params)#, properties)
+            refNames = _ex(req, conn.ReferenceNames, ObjectName=instName, **params)#, properties)
             req.write('Showing ' + `len(refNames)` + ' resulting object(s). <br><br>')
             for refName in refNames:
                 assocInstPath = refName
@@ -1024,7 +1024,7 @@ def InvokeMethod(req, url, ns, objPath, method, **params):
                     if metaParm.reference_class is not None:
                         paramVal = [_decodeObject(x) for x in paramVal]
                     else:
-                        paramVal = [pywbem.tocimobj(dt, x) for x in paramVal]
+                        paramVal = [pywbem.tocimobj(dt[:-2], x) for x in paramVal]
                     inParms[paramName] = paramVal
                 else:
                     if metaParm.reference_class is not None:
