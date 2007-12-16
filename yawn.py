@@ -577,12 +577,18 @@ def _displayInstance(req, inst, instName, klass, urlargs):
 
 
 ##############################################################################
-def GetInstance(req, url, ns, instPath):
+def GetInstance(req, url, ns, instPath=None, className=None, **params):
     conn = _frontMatter(req, url, ns)
     urlargs = {}
     urlargs['ns'] = ns
     urlargs['url'] = url
-    instName = _decodeObject(instPath)
+    if instPath is not None:
+        instName = _decodeObject(instPath)
+    else:
+        # Remove 'PropName.' prefix from param names.
+        params = dict ([(x[9:],y) for (x, y) in params.items()])
+        instName = pywbem.CIMInstanceName(className, 
+                keybindings=params, namespace=ns)
     inst = None
     klass = _ex(req,conn.GetClass,ClassName=instName.classname, LocalOnly = False, IncludeQualifiers = True)
     inst = _ex(req,conn.GetInstance,InstanceName=instName, LocalOnly = False)
@@ -778,8 +784,16 @@ def ModifyInstance(req, url, ns, instPath, **params):
 def CreateInstancePrep(req, url, ns, className):
     conn = _frontMatter(req, url, ns)
     klass = _ex(req, conn.GetClass, ClassName = className, LocalOnly = False, IncludeQualifiers = True)
-    ht = _printHead('Create Instances of '+className,'Create Instances of '+className, req, urlargs={'ns':ns, 'url':url})
+    ht = _printHead('Create Instance of '+className,'Create Instance of '+className, req, urlargs={'ns':ns, 'url':url})
     ht+= _displayInstanceMod(req, conn, url, ns, klass)
+    return ht + '</body></html>'
+
+##############################################################################
+def GetInstD(req, url, ns, className):
+    conn = _frontMatter(req, url, ns)
+    klass = _ex(req, conn.GetClass, ClassName = className, LocalOnly = False, IncludeQualifiers = True)
+    ht = _printHead('Get Instance of '+className,'Get Instance of '+className, req, urlargs={'ns':ns, 'url':url})
+    ht+= _displayInstanceMod(req, conn, url, ns, klass, getInst=True)
     return ht + '</body></html>'
 
 ##############################################################################
@@ -787,12 +801,12 @@ def ModifyInstPrep(req, url, ns, instPath):
     conn = _frontMatter(req, url, ns)
     instPathDec = _decodeObject(instPath)
     klass = _ex(req,conn.GetClass,ClassName=instPathDec.classname, LocalOnly = False, IncludeQualifiers = True)
-    ht = _printHead('Modify Instances of '+instPathDec.classname,'Modify Instances of '+instPathDec.classname, req, urlargs={'ns':ns, 'url':url})
+    ht = _printHead('Modify Instance of '+instPathDec.classname,'Modify Instance of '+instPathDec.classname, req, urlargs={'ns':ns, 'url':url})
     ht+= _displayInstanceMod(req, conn, url, ns, klass, (instPath, instPathDec))
     return ht + '</body></html>'
 
 ##############################################################################
-def _displayInstanceMod(req, conn, url, ns, klass, oldInstPathPair = None):
+def _displayInstanceMod(req, conn, url, ns, klass, oldInstPathPair = None, getInst=False):
     urlargs = {}
     urlargs['ns'] = ns
     urlargs['url'] = url
@@ -807,11 +821,25 @@ def _displayInstanceMod(req, conn, url, ns, klass, oldInstPathPair = None):
     if oldInstPathDec is not None:
         oldInst = _ex(req,conn.GetInstance,InstanceName=oldInstPathDec, LocalOnly = False)
     haveRequiredProps = False
-    propNames = klass.properties.keys()
-    _sortkey(propNames, klass)
+    if getInst:
+        propNames = [p.name for p in klass.properties.values()
+                if 'Key' in p.qualifiers]
+        propNames.sort()
+    else:
+        propNames = klass.properties.keys()
+        _sortkey(propNames, klass)
     ht = '<table border=0><tr><td>'
-    method = oldInst is not None and 'ModifyInstance' or 'CreateInstance'
-    ht+= '<form action="'+_baseScript(req)+'/'+method+'" METHOD=POST>'
+    if getInst:
+        method = 'GetInstance'
+    elif oldInst is not None:
+        method = 'ModifyInstance'
+    else:
+        method = 'CreateInstance'
+    ht+= '<form action="'+_baseScript(req)+'/'+method+'" METHOD='
+    if getInst:
+        ht+= 'GET>'
+    else:
+        ht+= 'POST>'
     ht+= '<input type=hidden name="url" value="'+url+'">'
     ht+= '<input type=hidden name="ns" value="'+ns+'">'
     if oldInstPathPair is None:
@@ -922,7 +950,11 @@ def _displayInstanceMod(req, conn, url, ns, klass, oldInstPathPair = None):
         ht+= '<td></td><td nowrap bgcolor="#FFaaaa">'
         ht+= '<i>Required (non-key) Property</i></td>'
     ht+= '<td width="100%" align="right">'
-    ht+= '<input type=submit value="Save Instance"></td></table></td></tr>'
+    if getInst:
+        button = 'Get Instance'
+    else:
+        button = 'Save Instance'
+    ht+= '<input type=submit value="%s"></td></table></td></tr>' % button
     ht+= '</form>'
     ht+= '</table>'
     return ht
@@ -1071,6 +1103,83 @@ def InvokeMethod(req, url, ns, objPath, method, **params):
         _printInstanceNames(req, urlargs, [lobjPath])
         ht = ''
 
+    return ht + '</body></html>'
+
+##############################################################################
+def Query(req, url, ns, lang, query):
+    conn = _frontMatter(req, url, ns)
+    urlargs = {}
+    urlargs['ns'] = ns
+    urlargs['url'] = url
+    insts = _ex(req, conn.ExecQuery, QueryLanguage=lang, 
+            Query=query, namespace=ns)
+    ht = _printHead('Query Results', req=req, urlargs=urlargs)
+    ht+= '<h2>Query Results</h2><hr>'
+    ht+= 'Query Language = '+lang
+    ht+= '<br>Query = '+query
+    numInsts = len(insts)
+    msgStart = 'Showing '+`numInsts`+' Instances<br />'
+    if numInsts == 0:
+        msgStart = 'No Instances<br />'
+    elif numInsts == 1:
+        msgStart = ''
+    ht+= msgStart
+    req.write(ht)
+    ccache = pywbem.NocaseDict()
+    for inst in insts:
+        instName = inst.path
+        try:
+            klass = ccache[instName.classname]
+        except KeyError:
+            klass = conn.GetClass(instName.classname, LocalOnly = "false")
+            ccache[instName.classname] = klass
+        req.write(_displayInstance(req, inst, instName, klass, urlargs.copy()))
+    return '</body></html>'
+
+
+
+    insts = _ex(req,conn.EnumerateInstances,ClassName = className, LocalOnly = False)
+    ht = _printHead('Instances of '+className, 'Instances of '+className, req, urlargs=urlargs)
+    numInsts = len(insts)
+    msgStart = 'Showing '+`numInsts`+' Instances<br />'
+    if numInsts == 0:
+        msgStart = 'No Instances<br />'
+    elif numInsts == 1:
+        msgStart = ''
+    ht+= msgStart
+    req.write(ht)
+    ccache = pywbem.NocaseDict()
+    for inst in insts:
+        instName = inst.path
+        try:
+            klass = ccache[instName.classname]
+        except KeyError:
+            klass = conn.GetClass(instName.classname, LocalOnly = "false")
+            ccache[instName.classname] = klass
+        req.write(_displayInstance(req, inst, instName, klass, urlargs.copy()))
+    return '</body></html>'
+
+##############################################################################
+def QueryD(req, url, ns, className=''):
+    conn = _frontMatter(req, url, ns)
+    urlargs = {}
+    urlargs['ns'] = ns
+    urlargs['url'] = url
+    ht = _printHead('Query', req=req, urlargs=urlargs)
+    ht+= '<h2>Execute Query</h2><hr>'
+    ht+= '<form action="'+_baseScript(req)+'/Query" METHOD=GET>'
+    ht+= '<input type=hidden name="url" value="'+url+'">'
+    ht+= '<input type=hidden name="ns" value="'+ns+'">'
+    ht+= '<table border=0>'
+    ht+= '<tr><td>Query Language</td><td>'
+    ht+= '<select name="lang">'
+    ht+= '<option value="WQL">WQL'
+    #ht+= '<option value="CQL">CQL'
+    ht+= '</select></td></tr>'
+    ht+= '<tr><td>Query</td>'
+    ht+= '<td><input type=text value="SELECT * FROM %s WHERE" size=80 name="query"></td></tr>' % className
+    ht+= '</table>'
+    ht+= '<input type=submit value="Execute Query"></form>'
     return ht + '</body></html>'
 
 ##############################################################################
@@ -1282,11 +1391,14 @@ def GetClass(req, url, ns, className):
     urlargs['ns'] = ns
     urlargs['url'] = url
     klass = _ex(req, conn.GetClass, ClassName = className, LocalOnly = "false", IncludeClassOrigin = "true")
+    urlargs['className'] = className
     ht = _printHead('Class '+className, 'Class '+className, req, urlargs=urlargs)
+    del urlargs['className']
     instUrlArgs = urlargs.copy()
     instUrlArgs['className'] = className
     ht+= '<table border=0><tr><td>'
-    ht+= '<div align=center>View '+_makeHref(req, 'EnumInstanceNames', instUrlArgs, 'Instance Names')
+    ht+= '<div align=center>'+_makeHref(req, 'GetInstD', instUrlArgs, 'Get Instance')
+    ht+= ' or view '+_makeHref(req, 'EnumInstanceNames', instUrlArgs, 'Instance Names')
     ht+= ' or '+_makeHref(req, 'EnumInstances', instUrlArgs, 'Instances')
     ht+= ' or '+_makeHref(req, 'AssociatedClasses', instUrlArgs, 'Associated Classes')
     ht+= ' of this class.'
@@ -1570,8 +1682,8 @@ def EnumClassNames(req, url, ns, className=None, mode='deep'):
             classNames = _ex(req, conn.EnumerateClassNames, 
                              DeepInheritance = mode=='flat') 
 
-    ht = _printHead('Classes in '+ns,'Classes in '+url+'/'+ns, req, {'url':url})
     urlargs = {'ns': ns, 'url': url}
+    ht = _printHead('Classes in '+ns,'Classes in '+url+'/'+ns, req, urlargs)
     ecn_urlargs = urlargs.copy()
     ecn_urlargs['mode'] = mode
     req.write(ht) ; ht = ''
@@ -1797,6 +1909,14 @@ def _printHead(title = None, heading = None, req = None, urlargs = None):
             ht+= '<td valign=top nowrap align=right><font size=-1><i>'
             ht+= _makeHref(req, 'EnumNamespaces', {'url':urlargs['url']},
                            'Namespaces')
+            ht+= '&nbsp;&nbsp;&nbsp;</i></td>'
+        if urlargs and 'ns' in urlargs and 'url' in urlargs:
+            try:
+                lurlargs['className'] = urlargs['className']
+            except KeyError:
+                pass
+            ht+= '<td valign=top nowrap align=right><font size=-1><i>'
+            ht+= _makeHref(req, 'QueryD', lurlargs, 'Query')
             ht+= '&nbsp;&nbsp;&nbsp;</i></td>'
         ht+= '<td valign=top nowrap align=right><font size=-1><i>'
         ht+= '<a href="'+_baseScript(req)+'/Logout">Logout &gt;&gt;</a></i>'
