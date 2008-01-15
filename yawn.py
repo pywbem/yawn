@@ -1385,6 +1385,17 @@ def _ex(req, method, **params):
         
 
 ##############################################################################
+def DeleteClass(req, url, ns, className):
+    conn = _frontMatter(req, url, ns)
+    urlargs = {}
+    urlargs['ns'] = ns
+    urlargs['url'] = url
+    _ex(req, conn.DeleteClass, ClassName = className)
+    ht = _printHead('Deleted class '+ className, urlargs=urlargs)
+    ht+= 'Deleted Class ' + className
+    return ht + '</body></html>'
+
+##############################################################################
 def GetClass(req, url, ns, className):
     conn = _frontMatter(req, url, ns)
     urlargs = {}
@@ -1393,11 +1404,12 @@ def GetClass(req, url, ns, className):
     klass = _ex(req, conn.GetClass, ClassName = className, LocalOnly = "false", IncludeClassOrigin = "true")
     urlargs['className'] = className
     ht = _printHead('Class '+className, 'Class '+className, req, urlargs=urlargs)
-    del urlargs['className']
     instUrlArgs = urlargs.copy()
-    instUrlArgs['className'] = className
     ht+= '<table border=0><tr><td>'
-    ht+= '<div align=center>'+_makeHref(req, 'GetInstD', instUrlArgs, 'Get Instance')
+    ht+= '<div align=center>'
+    ht+= _makeHref(req, 'DeleteClass', urlargs, 'Delete Class')
+    del urlargs['className']
+    ht+= '. ' + _makeHref(req, 'GetInstD', instUrlArgs, 'Get Instance')
     ht+= ' or view '+_makeHref(req, 'EnumInstanceNames', instUrlArgs, 'Instance Names')
     ht+= ' or '+_makeHref(req, 'EnumInstances', instUrlArgs, 'Instances')
     ht+= ' or '+_makeHref(req, 'AssociatedClasses', instUrlArgs, 'Associated Classes')
