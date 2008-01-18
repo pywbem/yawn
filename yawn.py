@@ -1382,6 +1382,11 @@ def _ex(req, method, **params):
         # see http://tinyurl.com/jjwjz
         req.status = apache.HTTP_OK
         raise apache.SERVER_RETURN, apache.DONE
+    #except: 
+        #fo = open('/tmp/yawn_dump', 'w')
+        #fo.write(req.conn.last_reply)
+        #fo.close()
+        #raise
         
 
 ##############################################################################
@@ -1666,8 +1671,74 @@ def _printEnumDeep(req, curclass, dict, urlargs, level = 0):
             _printEnumDeep(req, className, dict, urlargs, level+1)
 
 ##############################################################################
-def EnumClassNames(req, url, ns, className=None, mode='deep'):
+def EnumInstrumentedClassNames(req, url, ns):
+    fetched_classes = []
+    def get_class(cname):
+        fetched_classes.append(cname)
+        return _ex(req, conn.GetClass, ClassName=cname,
+                   LocalOnly=True, PropertyList=[],
+                   IncludeQualifiers=False, IncludeClassOrigin=False)
     conn = _frontMatter(req, url, ns)
+    caps = _ex(req, conn.EnumerateInstances,
+                    ClassName='PG_ProviderCapabilities', 
+                    namespace='root/PG_InterOp')
+    startClass = '.'
+    deepDict = {startClass:[]}
+    for cap in caps:
+        if ns not in cap['Namespaces']: 
+            continue
+        if cap['ClassName'] in fetched_classes:
+            continue
+        klass = get_class(cap['ClassName'])
+        if klass.superclass is None:
+            deepDict[startClass].append(klass.classname)
+        else:
+            try:
+                deepDict[klass.superclass].append(klass.classname)
+            except KeyError:
+                deepDict[klass.superclass] = [klass.classname]
+            while klass.superclass is not None:
+                if klass.superclass in fetched_classes:
+                    break
+                klass = get_class(klass.superclass)
+                if klass.superclass is None and \
+                        klass.superclass not in deepDict[startClass]:
+                    deepDict[startClass].append(klass.classname)
+                elif klass.superclass in deepDict:
+                    if klass.classname not in deepDict[klass.superclass]:
+                        deepDict[klass.superclass].append(klass.classname)
+                    break 
+                else:
+                    deepDict[klass.superclass] = [klass.classname]
+                            
+
+    urlargs = {'ns': ns, 'url': url}
+    ht = _printHead('Classes in '+ns,'Classes in '+url+'/'+ns, req, urlargs)
+    ht+= '<table border=0><tr><td></td>'
+    req.write(ht)
+
+    req.color = True
+    _printEnumDeep(req, startClass, deepDict, urlargs)
+
+    return '</table></body></html>'
+
+##############################################################################
+def EnumClassNames(req, url, ns, className=None, mode='deep', instOnly=None):
+    conn = _frontMatter(req, url, ns)
+    req.add_common_vars()
+    if instOnly is not None:
+        cookie = 'yawn_instOnly=%s;path=%s' % (instOnly, _baseScript(req))
+        instOnly = instOnly == 'true'
+        req.headers_out['Set-Cookie'] = cookie
+    else:
+        cookies = Cookie.get_cookies(req)
+        if 'yawn_instOnly' in cookies and \
+                cookies['yawn_instOnly'].value == 'true':
+            instOnly = True
+
+    if instOnly:
+        return EnumInstrumentedClassNames(req, url, ns)
+
     lineage = []
     if className is not None: 
         lineage = [className]
@@ -1752,9 +1823,9 @@ def EnumClassNames(req, url, ns, className=None, mode='deep'):
             if klass.superclass is None:
                 deepDict[startClass].append(klass.classname)
             else:
-                if deepDict.has_key(klass.superclass):
+                try:
                     deepDict[klass.superclass].append(klass.classname)
-                else:
+                except KeyError:
                     deepDict[klass.superclass] = [klass.classname]
 
         _printEnumDeep(req, startClass, deepDict, urlargs, len(lineage))
@@ -1994,7 +2065,6 @@ def EnumNamespaces(req, url):
         return ht + '</body></html>'
     urlargs = {}
     urlargs['url'] = url
-    ht+= "<ul>"
     nslist = [inst['Name'] for inst in nsinsts]
     if interopns not in nslist:
     # Pegasus didn't get the memo that namespaces aren't hierarchical
@@ -2004,10 +2074,29 @@ def EnumNamespaces(req, url):
         nslist = [interopns+'/'+subns for subns in nslist]
         nslist.append(interopns)
     nslist.sort()
+    nsd = None
+    if 'root/PG_InterOp' in nslist:
+        nsd = dict([(x, 0) for x in nslist])
+        caps = conn.EnumerateInstances('PG_ProviderCapabilities', 
+                namespace='root/PG_InterOp')
+        for cap in caps:
+            for _ns in cap['Namespaces']:
+                try:
+                    nsd[_ns] += 1
+                except KeyError:
+                    pass
+    ht+= '<table border=0>'
     for nsname in nslist:
         urlargs['ns'] = nsname
-        ht+= '<li>'+_makeHref(req, 'EnumClassNames', urlargs, nsname)
-    ht+= "</ul>"
+        urlargs['instOnly'] = 'false'
+        ht+= '<tr><td>'+_makeHref(req, 'EnumClassNames', urlargs, nsname)
+        ht+= '</td><td>&nbsp;&nbsp;'
+        if nsd and nsd[nsname] > 0:
+            urlargs['instOnly'] = 'true'
+            ht+= _makeHref(req, 'EnumClassNames', urlargs, 
+                           '%s Instrumented Classes' % nsd[nsname])
+        ht+= '</td></tr>' 
+    ht+= '</table>'
     return ht + '</body></html>'
 
 ##############################################################################
