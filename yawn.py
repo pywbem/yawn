@@ -350,7 +350,8 @@ def FilteredReferenceNames(req, url, ns, instPath, assocClass, resultClass,
 
     try:
         if assocCall=='Associators':
-            assocs = conn.Associators(instName, **params)#, properties)
+            assocs = _ex(conn.Associators,ObjectName=instName, 
+                         **params)#, properties)
             req.write('Showing ' + `len(assocs)` + ' resulting object(s). <br><br>')
             for assoc in assocs:
                 assocInstPath = assoc.path
@@ -362,7 +363,8 @@ def FilteredReferenceNames(req, url, ns, instPath, assocClass, resultClass,
                 klass = _ex(req, conn.GetClass,ClassName=assocInstPath.classname, namespace=assocInstPath.namespace, LocalOnly = False, IncludeQualifiers = True)
                 req.write(_displayInstance(req, assocInst, assocInstPath, klass, urlargs))
         elif  assocCall=='Associator Names':
-            assocNames = conn.AssociatorNames(instName, **params)#, properties)
+            assocNames = _ex(req, conn.AssociatorNames, ObjectName=instName, 
+                             **params)#, properties)
             req.write('Showing ' + `len(assocNames)` + ' resulting object(s). <br><br>')
             for assocName in assocNames:
                 assocInstPath = assocName
