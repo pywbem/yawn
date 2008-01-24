@@ -350,7 +350,7 @@ def FilteredReferenceNames(req, url, ns, instPath, assocClass, resultClass,
 
     try:
         if assocCall=='Associators':
-            assocs = _ex(conn.Associators,ObjectName=instName, 
+            assocs = _ex(req, conn.Associators,ObjectName=instName, 
                          **params)#, properties)
             req.write('Showing ' + `len(assocs)` + ' resulting object(s). <br><br>')
             for assoc in assocs:
