@@ -969,13 +969,14 @@ def EnumInstanceNames(req, url, ns, className):
     urlargs['url'] = url
     instNames = _ex(req,conn.EnumerateInstanceNames,ClassName = className)
     numInsts = len(instNames)
-    ht = ''
-    if numInsts == 0:
-        ht = 'No Instances'
-    elif numInsts == 1:
-        ht = '1 Instance'
-    else:
-        ht = `numInsts`+' Instances'
+    inameDict = pywbem.NocaseDict()
+    for iname in instNames:
+        if iname.classname not in inameDict:
+            inameDict[iname.classname] = [iname]
+        else:
+            inameDict[iname.classname].append(iname)
+
+    ht = '%s %s' %(numInsts, numInsts == 1 and 'Instance' or 'Instances')
 
     class_urlargs = urlargs.copy()
     class_urlargs["className"] = className
@@ -983,10 +984,26 @@ def EnumInstanceNames(req, url, ns, className):
     ht+= _makeHref(req, 'GetClass', class_urlargs, className) + '</h1>'
     ht = _printHead('Instances of '+className, ht, req, urlargs=urlargs)
     req.write(ht)
-    _printInstanceNames(req, urlargs, instNames)
-    ht = '<p>'
-    ht+= _makeHref(req, 'CreateInstancePrep', class_urlargs, 'Create New Instance')
-    return ht + '</body></html>'
+    if numInsts == 0:
+        ht = _makeHref(req, 'CreateInstancePrep', class_urlargs, 
+            'Create New Instance')
+        req.write(ht)
+
+    for cname, inames in inameDict.items():
+        if len(inameDict) > 1:
+            ht = '<h2>'
+            ht+= '%s %s' % (len(inames), len(inames) == 1 and 'Instance' or 'Instances')
+            class_urlargs["className"] = cname
+            ht+= ' of '
+            ht+= _makeHref(req, 'GetClass', class_urlargs, cname) + '</h2>'
+            req.write(ht)
+        _printInstanceNames(req, urlargs, inames)
+        ht = '<p>'
+        ht+= _makeHref(req, 'CreateInstancePrep', class_urlargs, 
+            'Create New Instance')
+        req.write(ht)
+
+    return '</body></html>'
 
 ##############################################################################
 def _frontMatter(req, url, ns):
@@ -1683,7 +1700,8 @@ def EnumInstrumentedClassNames(req, url, ns):
     conn = _frontMatter(req, url, ns)
     caps = _ex(req, conn.EnumerateInstances,
                     ClassName='PG_ProviderCapabilities', 
-                    namespace='root/PG_InterOp')
+                    namespace='root/PG_InterOp',
+                    PropertyList=['Namespaces', 'ClassName'])
     startClass = '.'
     deepDict = {startClass:[]}
     for cap in caps:
@@ -2080,7 +2098,8 @@ def EnumNamespaces(req, url):
     if 'root/PG_InterOp' in nslist:
         nsd = dict([(x, 0) for x in nslist])
         caps = conn.EnumerateInstances('PG_ProviderCapabilities', 
-                namespace='root/PG_InterOp')
+                namespace='root/PG_InterOp',
+                PropertyList=['Namespaces'])
         for cap in caps:
             for _ns in cap['Namespaces']:
                 try:
