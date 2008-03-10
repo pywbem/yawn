@@ -23,7 +23,7 @@
 
 # NOTE: yawn currently requires the latest pywbem from svn.
 #   cd /usr/lib/python/site-packages
-#   svn co https://svn.sourceforge.net/svnroot/pywbem/trunk pywbem
+#   svn co https://svn.sourceforge.net/svnroot/pywbem/pywbem/trunk pywbem
 
 # @author Bart Whiteley <bwhiteley@suse.de>
 # @author Norm Paxton <npaxton@novell.com>
@@ -2050,7 +2050,7 @@ def EnumNamespaces(req, url):
     nsinsts = []
     try:
         for nsclass in ['CIM_Namespace', '__Namespace']:
-            for interopns in ['Interop', 'interop', 'root', 'root/cimv2']:
+            for interopns in ['root/cimv2', 'Interop', 'interop', 'root']:
                 try:
                     nsinsts = conn.EnumerateInstanceNames(nsclass, namespace = interopns)
                 except pywbem.cim_http.AuthError, arg:
@@ -2085,7 +2085,7 @@ def EnumNamespaces(req, url):
         return ht + '</body></html>'
     urlargs = {}
     urlargs['url'] = url
-    nslist = [inst['Name'] for inst in nsinsts]
+    nslist = [inst['Name'].strip('/') for inst in nsinsts]
     if interopns not in nslist:
     # Pegasus didn't get the memo that namespaces aren't hierarchical
     # This will fall apart if there exists a namespace 
