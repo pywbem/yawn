@@ -67,7 +67,7 @@ def _val2str(x):
         rval+= '}'
         return cgi.escape(rval)
     else:
-        return cgi.escape(str(x))
+        return cgi.escape(unicode(x))
 
 ##############################################################################
 _status_codes = [('', '') 
@@ -1388,7 +1388,12 @@ def _ex(req, method, **params):
         ht = _printHead('Error')
         details = _code2string(arg[0])
         ht+= '<p><i>'+details[0]+': ' + details[1]+'</i>'
-        ht+= '<pre>'+cgi.escape(arg[1])+'</pre>'
+        errstr = arg[1]
+        if errstr.startswith('cmpi:Traceback'):
+            # we have a traceback from CMPI, that might have newlines
+            # converted.  need to convert them back. 
+            errstr = errstr[5:].replace('<br>', '\n')
+        ht+= '<pre>'+cgi.escape(errstr)+'</pre>'
         ht+= '<hr>'
         if req.conn.debug:
             if req.conn.last_request is not None:
