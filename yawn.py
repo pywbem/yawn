@@ -1430,7 +1430,7 @@ def GetClass(req, url, ns, className):
     urlargs = {}
     urlargs['ns'] = ns
     urlargs['url'] = url
-    klass = _ex(req, conn.GetClass, ClassName = className, LocalOnly = "false", IncludeClassOrigin = "true")
+    klass = _ex(req, conn.GetClass, ClassName = className, LocalOnly = False, IncludeClassOrigin = True, IncludeQualifiers=True)
     urlargs['className'] = className
     ht = _printHead('Class '+className, 'Class '+className, req, urlargs=urlargs)
     instUrlArgs = urlargs.copy()
