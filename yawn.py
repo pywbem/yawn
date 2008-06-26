@@ -123,7 +123,8 @@ def getAllHierarchy(req, url, ns, className):
     hierarchy.append(className)
     classNameToCheck = className
     while classNameToCheck != None:
-        subklass = conn.GetClass(classNameToCheck, LocalOnly = False, IncludeQualifiers = True)
+        subklass = conn.GetClass(classNameToCheck, LocalOnly = False, 
+                IncludeQualifiers=True)
         if subklass.superclass != None:
             classNameToCheck = subklass.superclass
             hierarchy.append(classNameToCheck)
@@ -144,7 +145,8 @@ def isSubClass(req, url, ns, subClassName, parentClassName):
     while classNameToCheck != None:
 #        req.write('<br>is ' + subClassName + ' a subclass of ' + parentClassName)
 #        req.write('<br>classNameToCheck: ' + classNameToCheck)
-        subklass = conn.GetClass(classNameToCheck, LocalOnly = False, IncludeQualifiers = True)
+        subklass = conn.GetClass(classNameToCheck, LocalOnly=False, 
+                IncludeQualifiers=True)
 #        req.write('<br>subklass: ' + `subklass`)
 #        req.write('<br>parentClassName: ' + parentClassName)
 
@@ -360,7 +362,10 @@ def FilteredReferenceNames(req, url, ns, instPath, assocClass, resultClass,
                 req.write('<hr><h2>Objects of Class: ' + assocClassName + '</h2>')
                 _printInstanceNames(req, urlargs, [assocInstPath])
 
-                klass = _ex(req, conn.GetClass,ClassName=assocInstPath.classname, namespace=assocInstPath.namespace, LocalOnly = False, IncludeQualifiers = True)
+                klass = _ex(req, conn.GetClass,
+                        ClassName=assocInstPath.classname, 
+                        namespace=assocInstPath.namespace, LocalOnly=False, 
+                        IncludeQualifiers=True)
                 req.write(_displayInstance(req, assocInst, assocInstPath, klass, urlargs))
         elif  assocCall=='Associator Names':
             assocNames = _ex(req, conn.AssociatorNames, ObjectName=instName, 
@@ -380,7 +385,8 @@ def FilteredReferenceNames(req, url, ns, instPath, assocClass, resultClass,
                 assocClassName = assocInst.classname
                 _printInstanceNames(req, urlargs, [assocInstPath])
 
-                klass = _ex(req,conn.GetClass,ClassName=assocInstPath.classname, LocalOnly = False, IncludeQualifiers = True)
+                klass = _ex(req,conn.GetClass,ClassName=assocInstPath.classname,
+                        LocalOnly=False, IncludeQualifiers=True)
                 req.write(_displayInstance(req, assocInst, assocInstPath, klass, urlargs))
         elif  assocCall=='Reference Names':
             refNames = _ex(req, conn.ReferenceNames, ObjectName=instName, **params)#, properties)
@@ -592,7 +598,8 @@ def GetInstance(req, url, ns, instPath=None, className=None, **params):
         instName = pywbem.CIMInstanceName(className, 
                 keybindings=params, namespace=ns)
     inst = None
-    klass = _ex(req,conn.GetClass,ClassName=instName.classname, LocalOnly = False, IncludeQualifiers = True)
+    klass = _ex(req,conn.GetClass,ClassName=instName.classname, 
+            LocalOnly=False, IncludeQualifiers=True)
     inst = _ex(req,conn.GetInstance,InstanceName=instName, LocalOnly = False)
     ht = _printHead('Instance of '+instName.classname, req=req, urlargs=urlargs)
     ht+= _displayInstance(req, inst, instName, klass, urlargs)
@@ -704,7 +711,7 @@ def EnumInstances(req, url, ns, className):
         try:
             klass = ccache[instName.classname]
         except KeyError:
-            klass = conn.GetClass(instName.classname, LocalOnly = "false")
+            klass = conn.GetClass(instName.classname, LocalOnly=False)
             ccache[instName.classname] = klass
         req.write(_displayInstance(req, inst, instName, klass, urlargs.copy()))
     return '</body></html>'
@@ -714,7 +721,8 @@ def _createOrModifyInstance(req, conn, url, ns, className, instName, **params):
     urlargs = {}
     urlargs['ns'] = ns
     urlargs['url'] = url
-    klass = _ex(req, conn.GetClass, ClassName = className, LocalOnly = False, IncludeQualifiers = True)
+    klass = _ex(req, conn.GetClass, ClassName=className, 
+            LocalOnly=False, IncludeQualifiers=True)
     if instName is not None:
         inst = _ex(req, conn.GetInstance,InstanceName=instName, LocalOnly = False)
     else:
@@ -785,7 +793,8 @@ def ModifyInstance(req, url, ns, instPath, **params):
 ##############################################################################
 def CreateInstancePrep(req, url, ns, className):
     conn = _frontMatter(req, url, ns)
-    klass = _ex(req, conn.GetClass, ClassName = className, LocalOnly = False, IncludeQualifiers = True)
+    klass = _ex(req, conn.GetClass, ClassName=className, 
+            LocalOnly=False, IncludeQualifiers=True)
     ht = _printHead('Create Instance of '+className,'Create Instance of '+className, req, urlargs={'ns':ns, 'url':url})
     ht+= _displayInstanceMod(req, conn, url, ns, klass)
     return ht + '</body></html>'
@@ -793,7 +802,8 @@ def CreateInstancePrep(req, url, ns, className):
 ##############################################################################
 def GetInstD(req, url, ns, className):
     conn = _frontMatter(req, url, ns)
-    klass = _ex(req, conn.GetClass, ClassName = className, LocalOnly = False, IncludeQualifiers = True)
+    klass = _ex(req, conn.GetClass, ClassName=className, LocalOnly=False, 
+            IncludeQualifiers=True)
     ht = _printHead('Get Instance of '+className,'Get Instance of '+className, req, urlargs={'ns':ns, 'url':url})
     ht+= _displayInstanceMod(req, conn, url, ns, klass, getInst=True)
     return ht + '</body></html>'
@@ -802,7 +812,8 @@ def GetInstD(req, url, ns, className):
 def ModifyInstPrep(req, url, ns, instPath):
     conn = _frontMatter(req, url, ns)
     instPathDec = _decodeObject(instPath)
-    klass = _ex(req,conn.GetClass,ClassName=instPathDec.classname, LocalOnly = False, IncludeQualifiers = True)
+    klass = _ex(req,conn.GetClass,ClassName=instPathDec.classname, 
+            LocalOnly=False, IncludeQualifiers=True)
     ht = _printHead('Modify Instance of '+instPathDec.classname,'Modify Instance of '+instPathDec.classname, req, urlargs={'ns':ns, 'url':url})
     ht+= _displayInstanceMod(req, conn, url, ns, klass, (instPath, instPathDec))
     return ht + '</body></html>'
@@ -871,7 +882,8 @@ def _displayInstanceMod(req, conn, url, ns, klass, oldInstPathPair = None, getIn
                 ht+= ' [ ]'
         else:
             ht+= '<td>'+prop.reference_class + ' <i>Ref</i>'
-        ht+= '</td><td title="'+cgi.escape(propTitle)+'">'+_makeHref(req, 'GetClass', urlargs, propName, '#'+propName.lower())+'</td>'
+        ht+= '</td><td title="'+cgi.escape(propTitle)+'">'+_makeHref(req, 
+                'GetClass', urlargs, propName, '#'+propName.lower())+'</td>'
         ht+= '<td>'
         fPropName = 'PropName.'+prop.name
         oldVal = None
@@ -1027,7 +1039,8 @@ def InvokeMethod(req, url, ns, objPath, method, **params):
     className = lobjPath.classname
     urlargs['className'] = className
     # else lobjPath is a CIMInstanceName
-    klass = _ex(req,conn.GetClass,ClassName = lobjPath.classname, LocalOnly = "false")
+    klass = _ex(req,conn.GetClass,ClassName = lobjPath.classname, 
+            LocalOnly=False)
     ht = 'Invoked method '+_makeHref(req, 'GetClass', urlargs, className)
     ht+= '::'+_makeHref(req, 'GetClass', urlargs, method, '#'+method.lower())
     ht+= '()'
@@ -1150,7 +1163,7 @@ def Query(req, url, ns, lang, query):
         try:
             klass = ccache[instName.classname]
         except KeyError:
-            klass = conn.GetClass(instName.classname, LocalOnly = "false")
+            klass = conn.GetClass(instName.classname, LocalOnly=False)
             ccache[instName.classname] = klass
         req.write(_displayInstance(req, inst, instName, klass, urlargs.copy()))
     return '</body></html>'
@@ -1173,7 +1186,7 @@ def Query(req, url, ns, lang, query):
         try:
             klass = ccache[instName.classname]
         except KeyError:
-            klass = conn.GetClass(instName.classname, LocalOnly = "false")
+            klass = conn.GetClass(instName.classname, LocalOnly=False)
             ccache[instName.classname] = klass
         req.write(_displayInstance(req, inst, instName, klass, urlargs.copy()))
     return '</body></html>'
@@ -1210,7 +1223,8 @@ def PrepMethod(req, url, ns, objPath, method):
     lobjPath = _decodeObject(objPath)
     className = None
     className = lobjPath.classname
-    klass = _ex(req,conn.GetClass,ClassName = className, LocalOnly = "false")
+    klass = _ex(req,conn.GetClass,ClassName = className, LocalOnly=False,
+            IncludeQualifiers=True)
 
     cimmethod = klass.methods[method]
     inParms = []
@@ -1389,7 +1403,7 @@ def _ex(req, method, **params):
         details = _code2string(arg[0])
         ht+= '<p><i>'+details[0]+': ' + details[1]+'</i>'
         errstr = arg[1]
-        if errstr.startswith('cmpi:Traceback'):
+        if errstr.startswith('cmpi:'):
             # we have a traceback from CMPI, that might have newlines
             # converted.  need to convert them back. 
             errstr = errstr[5:].replace('<br>', '\n')
@@ -2187,8 +2201,8 @@ def index(req):
 
 def Provider(req, url, ns, className):
     conn = _frontMatter(req, url, ns)
-    klass = _ex(req, conn.GetClass, ClassName = className, LocalOnly = "false", 
-                IncludeClassOrigin = "true")
+    klass = _ex(req, conn.GetClass, ClassName = className, LocalOnly=False, 
+                IncludeClassOrigin=True, IncludeQualifiers=True)
     code, mof = pywbem.codegen(klass)
     title = 'Python Provider for %s' % className
     ht = _printHead(title, req)
