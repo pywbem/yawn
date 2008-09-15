@@ -524,15 +524,18 @@ def _displayInstance(req, inst, instName, klass, urlargs):
             ht+= ' bgcolor="#FFaaaa"'
             haveRequiredProps = True
         ht+= '>'
-        if klassProp and klassProp.reference_class is None:
-            ht+= '<td>'+prop.type
-            if prop.is_array:
-                ht+= ' [ ]'
+        if klassProp: 
+            if klassProp.reference_class is None:
+                ht+= '<td>'+prop.type
+                if prop.is_array:
+                    ht+= ' [ ]'
+            else:
+                link_urlargs = class_urlargs.copy()
+                link_urlargs["className"] = klassProp.reference_class
+                ht+= '<td>'+_makeHref(req, "GetClass", link_urlargs, 
+                        klassProp.reference_class) + ' <i>Ref</i>'
         else:
-            link_urlargs = class_urlargs.copy()
-            link_urlargs["className"] = klassProp.reference_class
-            ht+= '<td>'+_makeHref(req, "GetClass", link_urlargs, 
-                    klassProp.reference_class) + ' <i>Ref</i>'
+            ht+='<td><font color="red">PropNotInSchema</font>'
         ht+= '</td><td title="'+cgi.escape(propTitle)+'">'+_makeHref(req, 'GetClass', class_urlargs, key, '#'+key.lower())+'</td><td>'
 
 
