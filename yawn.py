@@ -38,6 +38,10 @@ import urlparse
 import string
 import zlib
 import os
+try:
+    from pywbem.cim_provider2 import codegen
+except ImportError:
+    codegen = None
 
 
 # Mostly I just wanted to be able to say that I've used lambda functions
@@ -520,18 +524,21 @@ def _displayInstance(req, inst, instName, klass, urlargs):
             ht+= ' bgcolor="#FFaaaa"'
             haveRequiredProps = True
         ht+= '>'
-        if prop.reference_class is None:
+        if klassProp and klassProp.reference_class is None:
             ht+= '<td>'+prop.type
             if prop.is_array:
                 ht+= ' [ ]'
         else:
-            ht+= '<td>'+prop.reference_class + ' <i>Ref</i>'
+            link_urlargs = class_urlargs.copy()
+            link_urlargs["className"] = klassProp.reference_class
+            ht+= '<td>'+_makeHref(req, "GetClass", link_urlargs, 
+                    klassProp.reference_class) + ' <i>Ref</i>'
         ht+= '</td><td title="'+cgi.escape(propTitle)+'">'+_makeHref(req, 'GetClass', class_urlargs, key, '#'+key.lower())+'</td><td>'
 
 
         if klassProp and klassProp.qualifiers.has_key('values') and klassProp.qualifiers.has_key('valuemap'):
             ht+= _displayMappedValue(prop.value, klassProp.qualifiers)
-        elif prop.reference_class is not None:
+        elif klassProp and klassProp.reference_class is not None:
             ns = _val2str(inst[key].namespace)
             urlargs['ns'] = ns
             targetInstName = inst[key]
@@ -727,7 +734,7 @@ def _createOrModifyInstance(req, conn, url, ns, className, instName, **params):
         inst = _ex(req, conn.GetInstance,InstanceName=instName, LocalOnly = False)
     else:
         inst = pywbem.CIMInstance(className)
-	inst.path = pywbem.CIMInstanceName(className, namespace=ns)
+    inst.path = pywbem.CIMInstanceName(className, namespace=ns)
     # Remove 'PropName.' prefix from param names.
     params = dict ([(x[9:],y) for (x, y) in params.items()])
     for propName, propVal in params.items():
@@ -1444,7 +1451,8 @@ def GetClass(req, url, ns, className):
     urlargs = {}
     urlargs['ns'] = ns
     urlargs['url'] = url
-    klass = _ex(req, conn.GetClass, ClassName = className, LocalOnly = False, IncludeClassOrigin = True, IncludeQualifiers=True)
+    klass = _ex(req, conn.GetClass, ClassName=className, LocalOnly=False, 
+            IncludeClassOrigin=True, IncludeQualifiers=True)
     urlargs['className'] = className
     ht = _printHead('Class '+className, 'Class '+className, req, urlargs=urlargs)
     instUrlArgs = urlargs.copy()
@@ -1457,9 +1465,11 @@ def GetClass(req, url, ns, className):
     ht+= ' or '+_makeHref(req, 'EnumInstances', instUrlArgs, 'Instances')
     ht+= ' or '+_makeHref(req, 'AssociatedClasses', instUrlArgs, 'Associated Classes')
     ht+= ' of this class.'
-    if hasattr(pywbem, 'codegen'):
+    if codegen is not None:
         ht+= ' &nbsp;'+ _makeHref(req, 
-                   'Provider', instUrlArgs, 'Python Provider')
+                   'PyProvider', instUrlArgs, 'Python Provider')
+    ht+= ' &nbsp;'+ _makeHref(req, 
+               'CMPIProvider', instUrlArgs, 'CMPI Provider')
     ht+= '</div>'
     ht+= '<table border="1" cellpadding="2">'
     if klass.qualifiers.has_key('aggregation'):
@@ -2199,11 +2209,11 @@ def index(req):
 ##############################################################################
 ##############################################################################
 
-def Provider(req, url, ns, className):
+def PyProvider(req, url, ns, className):
     conn = _frontMatter(req, url, ns)
     klass = _ex(req, conn.GetClass, ClassName = className, LocalOnly=False, 
                 IncludeClassOrigin=True, IncludeQualifiers=True)
-    code, mof = pywbem.codegen(klass)
+    code, mof = codegen(klass)
     title = 'Python Provider for %s' % className
     ht = _printHead(title, req)
     ht+= '<font size=+1><b>%s</b></font>' % title
@@ -2214,8 +2224,25 @@ def Provider(req, url, ns, className):
     ht+= '<table bgcolor="#f9f9f9" cellspacing=0 cellpadding=10 border=1>'
     ht+= '<tr><td><pre>'+cgi.escape(mof)+'</pre>'
     ht+= '</td></tr></table>'
-    return ht
+    return ht + '</body></html>'
 
+
+def CMPIProvider(req, url, ns, className):
+    conn = _frontMatter(req, url, ns)
+    klass = _ex(req, conn.GetClass, ClassName = className, LocalOnly=False, 
+                IncludeClassOrigin=True, IncludeQualifiers=True)
+    code = cmpi_codegen(klass)
+    title = 'CMPI Provider for %s' % className
+    ht = _printHead(title, req)
+    ht+= '<font size=+1><b>%s</b></font>' % title
+    ht+= '<table bgcolor="#f9f9f9" cellspacing=0 cellpadding=10 border=1>'
+    ht+= '<tr><td><pre>'+cgi.escape(code)+'</pre>'
+    ht+= '</td></tr></table>'
+    #ht+= '<font size=+1><b>Provider Registration MOF</b></font>'
+    #ht+= '<table bgcolor="#f9f9f9" cellspacing=0 cellpadding=10 border=1>'
+    #ht+= '<tr><td><pre>'+cgi.escape(mof)+'</pre>'
+    #ht+= '</td></tr></table>'
+    return ht + '</body></html>'
 
 ##############################################################################
 ##############################################################################
@@ -2249,5 +2276,282 @@ def Provider(req, url, ns, className):
 _comboBox_js = """
 <!-- Removed combobox script for now.  If we need it, go get it (and get it working) -->
 """
+
+
+
+def cmpi_codegen(klass):
+    code = '''/* <Insert License Here> */
+
+#include <stdio.h>
+#include <stdarg.h>
+
+#include <cmpi/cmpidt.h>
+#include <cmpi/cmpift.h>
+#include <cmpi/cmpimacs.h>
+
+/* A simple stderr logging/tracing facility. */
+#ifndef _CMPI_TRACE
+#define _CMPI_TRACE(tracelevel,args) _logstderr args 
+static void _logstderr(char *fmt,...)
+{
+   va_list ap;
+   va_start(ap,fmt);
+   vfprintf(stderr,fmt,ap);
+   va_end(ap);
+   fprintf(stderr,"\\n");
+}
+#endif
+
+/* Global handle to the CIM broker. This is initialized by the CIMOM when the provider is loaded */
+static const CMPIBroker * _broker = NULL;
+
+static CMPIStatus %(cname)sCleanup(CMPIInstanceMI * self,
+                                   const CMPIContext * ctx,
+                                   CMPIBoolean terminating)
+{
+    CMPIStatus st = { CMPI_RC_OK, NULL }; 
+    return st; 
+}
+
+static CMPIStatus %(cname)sEnumInstanceNames(CMPIInstanceMI * self,
+                                             const CMPIContext * ctx,
+                                             const CMPIResult * rslt,
+                                             const CMPIObjectPath * op)
+{
+    _CMPI_TRACE(1,("%(cname)sEnumInstanceNames() called, ctx %%p, result %%p, op %%p", ctx, rslt, op));
+    CMPIStatus status = {CMPI_RC_OK, NULL};
+
+    CMPIString* cns = CMGetNamespace(op, &status); 
+    char* ns = CMGetCharsPtr(cmstr, &status); 
+    CMPIString* ccname = CMGetClassName(op, &status); 
+    char* cname = CMGetCharsPtr(ccname, &status); 
+    CMPIObjectPath* cop = CMNewObjectPath(_broker, ns, cname, &status); 
+    CMReturnObjectPath(rslt, cop);
+    CMReturnDone(rslt); 
+    status.rc = CMPI_RC_OK; 
+    status.msg = NULL; 
+
+    _CMPI_TRACE(1,("%(cname)sEnumInstanceNames() %%s", (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
+    return status;
+}
+
+static CMPIStatus %(cname)sEnumInstances(
+        CMPIInstanceMI * self,
+		const CMPIContext * ctx,
+		const CMPIResult * rslt,
+		const CMPIObjectPath * op,
+		const char ** properties)
+{
+   CMPIStatus status = {CMPI_RC_OK, NULL};	
+
+    _CMPI_TRACE(1,("%(cname)sEnumInstances() called, ctx %%p, rslt %%p, op %%p, properties %%p", ctx, rslt, op, properties));
+
+	//CMReturnInstance(rslt, getSSHServiceInstance(&status)); 
+	CMReturnDone(rslt); 
+
+   status.rc = CMPI_RC_OK; 
+   status.msg = NULL; 
+
+   _CMPI_TRACE(1,("%(cname)sEnumInstances() %%s", (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
+   return status;
+}
+
+static CMPIStatus %(cname)sGetInstance(
+		CMPIInstanceMI * self,
+		const CMPIContext * ctx,
+		const CMPIResult * rslt,
+		const CMPIObjectPath * op,
+		const char ** properties)
+{
+   CMPIStatus status = {CMPI_RC_OK, NULL};
+
+    _CMPI_TRACE(1,("%(cname)sGetInstance() called, ctx %%p, rslt %%p, op %%p, properties %%p", ctx, rslt, op, properties));
+
+	//CMReturnInstance(rslt, getSSHServiceInstance(&status)); 
+	CMReturnDone(rslt); 
+
+   status.rc = CMPI_RC_OK; 
+   status.msg = NULL; 
+
+   _CMPI_TRACE(1,("%(cname)sGetInstance() %%s", (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
+   return status;
+}
+
+static CMPIStatus %(cname)sCreateInstance(
+		CMPIInstanceMI * self,
+		const CMPIContext * ctx,
+		const CMPIResult * rslt,
+		const CMPIObjectPath * op,
+		const CMPIInstance * inst)
+{
+   CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
+   
+    _CMPI_TRACE(1,("%(cname)sCreateInstance() called, ctx %%p, rslt %%p, op %%p, inst %%p", ctx, rslt, op, inst));
+   _CMPI_TRACE(1,("%(cname)sCreateInstance() %%s", (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
+   return status;
+}
+
+
+// ----------------------------------------------------------------------------
+
+#ifdef CMPI_VER_100
+#define %(cname)sSetInstance %(cname)sModifyInstance
+#endif
+
+static CMPIStatus %(cname)sSetInstance(
+		CMPIInstanceMI * self,
+		const CMPIContext * ctx,
+		const CMPIResult * rslt,
+		const CMPIObjectPath * op,
+		const CMPIInstance * inst,
+		const char ** properties)
+{
+   CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
+   
+    _CMPI_TRACE(1,("%(cname)sSetInstance() called, ctx %%p, rslt %%p, op %%p, inst %%p, properties %%p", ctx, rslt, op, inst, properties));
+   _CMPI_TRACE(1,("%(cname)sSetInstance() %%s", (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
+   return status;
+}
+
+// ----------------------------------------------------------------------------
+
+
+/* DeleteInstance() - delete/remove the specified instance. */
+static CMPIStatus %(cname)sDeleteInstance(
+		CMPIInstanceMI * self,	
+		const CMPIContext * ctx,
+		const CMPIResult * rslt,	
+		const CMPIObjectPath * op)
+{
+   CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
+
+    _CMPI_TRACE(1,("%(cname)sDeleteInstance() called, ctx %%p, rslt %%p, op %%p", ctx, rslt, op));
+   _CMPI_TRACE(1,("%(cname)sDeleteInstance() %%s", (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
+   return status;
+}
+
+// ----------------------------------------------------------------------------
+
+
+static CMPIStatus %(cname)sExecQuery(
+		CMPIInstanceMI * self,
+		const CMPIContext * ctx,
+		const CMPIResult * rslt,
+		const CMPIObjectPath * op,
+		const char * query,
+		const char * lang)
+{
+   CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};	/* Return status of CIM operations. */
+   
+    _CMPI_TRACE(1,("%(cname)sExecQuery() called, ctx %%p, rslt %%p, op %%p, query %%s, lang %%s", ctx, rslt, op, query, lang));
+   _CMPI_TRACE(1,("%(cname)sExecQuery() %%s", (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
+   return status;
+}
+
+//  associatorMIFT
+//
+
+CMPIStatus %(cname)sAssociatorNames(
+		CMPIAssociationMI* self,
+		const CMPIContext* ctx,
+		const CMPIResult* rslt,
+		const CMPIObjectPath* op,
+		const char* assocClass,
+		const char* resultClass,
+		const char* role,
+		const char* resultRole)
+{
+   	CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
+   
+    _CMPI_TRACE(1,("associatorNames() called, ctx %%p, rslt %%p, op %%p, assocClass %%s, resultClass %%s, role %%s, resultRole %%s", ctx, rslt, op, assocClass, resultClass, role, resultRole));
+
+   _CMPI_TRACE(1,("associatorNames() %%s", (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
+   return status;
+}
+
+/***************************************************************************/
+CMPIStatus %(cname)sAssociators(
+		CMPIAssociationMI* self,
+		const CMPIContext* ctx,
+		const CMPIResult* rslt,
+		const CMPIObjectPath* op,
+		const char* assocClass,
+		const char* resultClass,
+		const char* role,
+		const char* resultRole,
+		const char** properties)
+{
+   	CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
+   
+    _CMPI_TRACE(1,("associators() called, ctx %%p, rslt %%p, op %%p, assocClass %%s, resultClass %%s, role %%s, resultRole %%s", ctx, rslt, op, assocClass, resultClass, role, resultRole));
+
+   _CMPI_TRACE(1,("associators() %%s", (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
+   return status;
+}
+
+/***************************************************************************/
+CMPIStatus %(cname)sReferenceNames(
+		CMPIAssociationMI* self,
+		const CMPIContext* ctx,
+		const CMPIResult* rslt,
+		const CMPIObjectPath* op,
+		const char* resultClass,
+		const char* role)
+{
+   	CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
+   
+    _CMPI_TRACE(1,("referenceNames() called, ctx %%p, rslt %%p, op %%p, resultClass %%s, role %%s", ctx, rslt, op, resultClass, role));
+
+   _CMPI_TRACE(1,("referenceNames() %%s", (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
+   return status;
+}
+
+
+/***************************************************************************/
+CMPIStatus %(cname)sReferences(
+		CMPIAssociationMI* self,
+		const CMPIContext* ctx,
+		const CMPIResult* rslt,
+		const CMPIObjectPath* op,
+		const char* resultClass,
+		const char* role,
+		const char** properties)
+{
+   	CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
+   
+    _CMPI_TRACE(1,("references() called, ctx %%p, rslt %%p, op %%p, resultClass %%s, role %%s, properties %%p", ctx, rslt, op, resultClass, role, properties));
+
+   _CMPI_TRACE(1,("references() %%s", (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
+   return status;
+}
+
+/***************************************************************************/
+CMPIStatus %(cname)sInvokeMethod(
+		CMPIMethodMI* self,
+		const CMPIContext* ctx,
+		const CMPIResult* rslt,
+		const CMPIObjectPath* op,
+		const char* method,
+		const CMPIArgs* in,
+		CMPIArgs* out)
+{
+   	CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
+   
+    _CMPI_TRACE(1,("invokeMethod() called, ctx %%p, rslt %%p, op %%p, method %%s, in %%p, out %%p", ctx, rslt, op, method, in, out));
+
+   _CMPI_TRACE(1,("invokeMethod() %%s", (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
+   return status;
+}
+
+/***************************************************************************/
+
+
+CMMethodMIStub( %(cname)s, %(cname)s, _broker, CMNoHook); 
+CMInstanceMIStub( %(cname)s, %(cname)s, _broker, CMNoHook); 
+CMAssociationMIStub( %(cname)s, %(cname)s, _broker, CMNoHook); 
+
+
+''' % {'cname':klass.classname} 
+    return code
 
 
