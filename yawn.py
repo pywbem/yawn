@@ -2082,7 +2082,7 @@ def EnumNamespaces(req, url):
     nsinsts = []
     try:
         for nsclass in ['CIM_Namespace', '__Namespace']:
-            for interopns in ['root/cimv2', 'Interop', 'interop', 'root']:
+            for interopns in ['root/cimv2', 'Interop', 'interop', 'root', 'root/interop']:
                 try:
                     nsinsts = conn.EnumerateInstanceNames(nsclass, namespace = interopns)
                 except pywbem.cim_http.AuthError, arg:
