@@ -2157,6 +2157,8 @@ def Login(req, scheme, host, port, ns):
     url = scheme + '://'+host
     if not ((scheme == 'https' and port == '5989') or (scheme == 'http' and port == '5988')):
         url += ':'+port
+    if host[0] == '/':
+        url = host
     if ns:
         return EnumClassNames(req, url, ns)
     return EnumNamespaces(req, url)
