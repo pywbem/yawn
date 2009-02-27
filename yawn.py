@@ -1417,6 +1417,9 @@ def _ex(req, method, **params):
             # we have a traceback from CMPI, that might have newlines
             # converted.  need to convert them back. 
             errstr = errstr[5:].replace('<br>', '\n')
+        elif 'cmpi:Traceback' in errstr:
+            errstr = errstr.replace('cmpi:Traceback', 'Traceback')
+            errstr = errstr.replace('<br>', '\n')
         ht+= '<pre>'+cgi.escape(errstr)+'</pre>'
         ht+= '<hr>'
         if req.conn.debug:
