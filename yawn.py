@@ -673,6 +673,7 @@ def _printInstRow(req, urlargs, keys, inst, omitGetLink = False):
 ##############################################################################
 def Pickle(req, obj):
     req.add_common_vars()
+    req.content_type = "Text/HTML"
     ht = _printHead("Object", "Object Serialization", req)
     ht+= '<p><i>To pass the following object as a Parameter Reference to a method call, copy this string to your clipboard and paste it to the parameter field.</i><p>'
     ht+= '<hr>'+obj+'<hr>'
