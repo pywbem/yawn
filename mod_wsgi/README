@@ -1,0 +1,15 @@
+This is yawn for apache's wsgi python module.
+
+Dependencies:
+    pywbem
+    httpd
+    mod_wsgi
+    python-werkzeug
+
+Usage (for fedora/RHEL):
+    $ mkdir /var/www/yawn
+    $ cp scripts/yawn.wsgi /var/www/yawn
+    $ cp apache/yawn.conf /etc/httpd/conf.d
+    $ service httpd restart
+
+    and access the yawn service at: http://localhost/yawn
