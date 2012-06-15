@@ -1,5 +1,11 @@
 #!/usr/bin/env python
 
-from pywbem_yawn import Yawn
+import pywbem_yawn
+from werkzeug.wsgi import SharedDataMiddleware
 
-application = Yawn()
+app = pywbem_yawn.Yawn()
+
+application = SharedDataMiddleware(
+        app,
+        { '/static' : (pywbem_yawn.__name__, 'static') })
+
