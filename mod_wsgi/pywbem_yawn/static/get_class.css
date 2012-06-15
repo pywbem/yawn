@@ -1,0 +1,43 @@
+.nav { text-align: center; }
+table.params {
+    border: 1px solid black;
+    border-spacing: 2px;
+}
+table.details { padding: 2px }
+table.params { width: 100% }
+table.params tr.item, table.params .item td { border: 1px solid black }
+.class_header td {
+    text-align: center;
+    width: 50%;
+    font-weight: bold;
+}
+.class_header .name {
+    background-color: black;
+    color: white;
+}
+.class_header.association .name { background-color: red }
+.class_header.aggregation .name { background-color: green }
+.params_header td {
+    text-align: center;
+    font-weight: bold;
+    background-color: #c0c0c0;
+}
+table.params table.args, table.params table.args td, table.params table.args tr {
+    border-width: 0px;
+}
+table.args .declaration:not(.last) td:not(.spacer) { 
+    border-bottom: 1px solid black;
+}
+table.args .info:not(.first) td{
+    padding-top: 5px;
+}
+table.args td.spacer { width: 32px }
+.description, .class_origin .caption  { font-style: italic }
+.item.local td { background-color: #cccccc }
+.name { font-weight: bold }
+.deprecated .name, .deprecated .description { text-decoration: line-through }
+.key .name { color: red }
+.qualifiers .caption, .in_out {
+    font-weight: bold;
+    vertical-align: top;
+}

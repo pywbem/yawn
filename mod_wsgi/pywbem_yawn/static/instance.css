@@ -1,0 +1,23 @@
+.host .value, .namespace .value {
+    font-style: italic;
+    color: #00AA00;
+}
+tr.inst_header { background-color: #cccccc; }
+td.assocs { text-align: right; }
+tr.required, td.required { background-color: #ffaaaa }
+tr.key, td.key { background-color: #ffdddd }
+td.type .reference { font-style: italic }
+.methods td.title {
+    text-align: center;
+    font-weight: bold;
+    font-size: 120%;
+}
+.prop_summary { font-style: italic }
+.params, .params th, .params td {
+    border: 1px solid black;
+    border-spacing: 2px;
+}
+.params th { background-color: #CCCCCC }
+#results .caption { font-weight: bold }
+#results { margin-bottom: 10px }
+table.valuemap td { border-width: 0px; }

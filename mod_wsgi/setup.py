@@ -11,5 +11,5 @@ setup(
         author_email = "miminar@redhat.com",
         license = "GPL",
         description = "Yet Another WBEM Navigator for Apache's mod_wsgi",
-        install_requires=['distribute', 'werkzeug'] #, 'mako'
+        install_requires=['distribute', 'werkzeug', 'mako']
 )

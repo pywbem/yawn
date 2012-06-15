@@ -1,0 +1,10 @@
+h1 .big {
+    color: red;
+    font-weight: bold;
+}
+h3 { font-style: italic }
+.foot {
+    text-align: center;
+    margin-left: auto;
+    margin-right: auto;
+}

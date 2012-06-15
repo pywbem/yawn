@@ -1,0 +1,18 @@
+table#query {
+    border: 1px solid black;
+    border-spacing: 2px;
+}
+table#query td, table#query th {
+    border: 1px solid black;
+}
+table.query th {
+    text-align: left;
+    font-weight: normal;
+}
+table#query_info {
+    border-width: 0px;
+}
+table#query_info tr.query td {
+    font-family: monospace;
+}
+

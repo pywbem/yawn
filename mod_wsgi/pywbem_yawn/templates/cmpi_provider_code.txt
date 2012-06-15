@@ -1,0 +1,300 @@
+/* <Insert License Here> */
+
+#include <stdio.h>
+#include <stdarg.h>
+
+#include <cmpi/cmpidt.h>
+#include <cmpi/cmpift.h>
+#include <cmpi/cmpimacs.h>
+
+/* A simple stderr logging/tracing facility. */
+#ifndef _CMPI_TRACE
+#define _CMPI_TRACE(tracelevel,args) _logstderr args
+static void _logstderr(char *fmt,...)
+{
+    va_list ap;
+    va_start(ap,fmt);
+    vfprintf(stderr,fmt,ap);
+    va_end(ap);
+    fprintf(stderr,"\n");
+}
+#endif
+
+/* Global handle to the CIM broker. This is initialized by the CIMOM when
+ * the provider is loaded */
+static const CMPIBroker * _broker = NULL;
+
+static CMPIStatus ${className}Cleanup(
+       CMPIInstanceMI * self,
+       const CMPIContext * ctx,
+       CMPIBoolean terminating)
+{
+     CMPIStatus st = { CMPI_RC_OK, NULL };
+     return st;
+}
+
+static CMPIStatus ${className}EnumInstanceNames(
+        CMPIInstanceMI * self,
+        const CMPIContext * ctx,
+        const CMPIResult * rslt,
+        const CMPIObjectPath * op)
+{
+     _CMPI_TRACE(1, ("${className}EnumInstanceNames() called, ctx %p,"
+                " result %p, op %p", ctx, rslt, op));
+     CMPIStatus status = {CMPI_RC_OK, NULL};
+
+     CMPIString* cns = CMGetNamespace(op, &status);
+     char* ns = CMGetCharsPtr(cmstr, &status);
+     CMPIString* ccname = CMGetClassName(op, &status);
+     char* cname = CMGetCharsPtr(ccname, &status);
+     CMPIObjectPath* cop = CMNewObjectPath(_broker, ns, cname, &status);
+     CMReturnObjectPath(rslt, cop);
+     CMReturnDone(rslt);
+     status.rc = CMPI_RC_OK;
+     status.msg = NULL;
+
+     _CMPI_TRACE(1,("${className}EnumInstanceNames() %s",
+                (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
+     return status;
+}
+
+static CMPIStatus ${className}EnumInstances(
+        CMPIInstanceMI * self,
+        const CMPIContext * ctx,
+        const CMPIResult * rslt,
+        const CMPIObjectPath * op,
+        const char ** properties)
+{
+    CMPIStatus status = {CMPI_RC_OK, NULL};
+
+    _CMPI_TRACE(1, ("${className}EnumInstances() called, ctx %p, rslt %p,"
+                " op %p, properties %p", ctx, rslt, op, properties));
+
+    //CMReturnInstance(rslt, getSSHServiceInstance(&status));
+    CMReturnDone(rslt);
+
+    status.rc = CMPI_RC_OK;
+    status.msg = NULL;
+
+    _CMPI_TRACE(1, ("${className}EnumInstances() %s",
+          (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
+    return status;
+}
+
+static CMPIStatus ${className}GetInstance(
+        CMPIInstanceMI * self,
+        const CMPIContext * ctx,
+        const CMPIResult * rslt,
+        const CMPIObjectPath * op,
+        const char ** properties)
+{
+    CMPIStatus status = {CMPI_RC_OK, NULL};
+
+    _CMPI_TRACE(1, ("${className}GetInstance() called, ctx %p, rslt %p,"
+        " op %p, properties %p", ctx, rslt, op, properties));
+
+    //CMReturnInstance(rslt, getSSHServiceInstance(&status));
+    CMReturnDone(rslt);
+
+    status.rc = CMPI_RC_OK;
+    status.msg = NULL;
+
+    _CMPI_TRACE(1, ("${className}GetInstance() %s",
+         (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
+    return status;
+}
+
+static CMPIStatus ${className}CreateInstance(
+        CMPIInstanceMI * self,
+        const CMPIContext * ctx,
+        const CMPIResult * rslt,
+        const CMPIObjectPath * op,
+        const CMPIInstance * inst)
+{
+    CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
+
+    _CMPI_TRACE(1, ("${className}CreateInstance() called, ctx %p, rslt %p,"
+        " op %p, inst %p", ctx, rslt, op, inst));
+    _CMPI_TRACE(1, ("${className}CreateInstance() %s",
+        (status.rc == CMPI_RC_OK) ? "succeeded":"failed"));
+    return status;
+}
+
+
+// ----------------------------------------------------------------------------
+
+#ifdef CMPI_VER_100
+#define ${className}SetInstance ${className}ModifyInstance
+#endif
+
+static CMPIStatus ${className}SetInstance(
+        CMPIInstanceMI * self,
+        const CMPIContext * ctx,
+        const CMPIResult * rslt,
+        const CMPIObjectPath * op,
+        const CMPIInstance * inst,
+        const char ** properties)
+{
+    CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
+
+    _CMPI_TRACE(1, ("${className}SetInstance() called, ctx %p, rslt %p,"
+        " op %p, inst %p, properties %p", ctx, rslt, op, inst, properties));
+    _CMPI_TRACE(1, ("${className}SetInstance() %s",
+        (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
+    return status;
+}
+
+// ----------------------------------------------------------------------------
+
+
+/* DeleteInstance() - delete/remove the specified instance. */
+static CMPIStatus ${className}DeleteInstance(
+        CMPIInstanceMI * self,
+        const CMPIContext * ctx,
+        const CMPIResult * rslt,
+        const CMPIObjectPath * op)
+{
+    CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
+
+    _CMPI_TRACE(1, ("${className}DeleteInstance() called, ctx %p, rslt %p,"
+        " op %p", ctx, rslt, op));
+    _CMPI_TRACE(1, ("${className}DeleteInstance() %s",
+        (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
+    return status;
+}
+
+// ----------------------------------------------------------------------------
+
+
+static CMPIStatus ${className}ExecQuery(
+        CMPIInstanceMI * self,
+        const CMPIContext * ctx,
+        const CMPIResult * rslt,
+        const CMPIObjectPath * op,
+        const char * query,
+        const char * lang)
+{
+    /* Return status of CIM operations. */
+    CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
+
+    _CMPI_TRACE(1, ("${className}ExecQuery() called, ctx %p, rslt %p, op %p,"
+        " query %s, lang %s", ctx, rslt, op, query, lang));
+    _CMPI_TRACE(1, ("${className}ExecQuery() %s",
+        (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
+    return status;
+}
+
+//  associatorMIFT
+//
+
+CMPIStatus ${className}AssociatorNames(
+        CMPIAssociationMI* self,
+        const CMPIContext* ctx,
+        const CMPIResult* rslt,
+        const CMPIObjectPath* op,
+        const char* assocClass,
+        const char* resultClass,
+        const char* role,
+        const char* resultRole)
+{
+         CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
+
+    _CMPI_TRACE(1, ("associatorNames() called, ctx %p, rslt %p, op %p,"
+        " assocClass %s, resultClass %s, role %s, resultRole %s",
+        ctx, rslt, op, assocClass, resultClass, role, resultRole));
+
+    _CMPI_TRACE(1, ("associatorNames() %s",
+        (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
+    return status;
+}
+
+/***************************************************************************/
+CMPIStatus ${className}Associators(
+        CMPIAssociationMI* self,
+        const CMPIContext* ctx,
+        const CMPIResult* rslt,
+        const CMPIObjectPath* op,
+        const char* assocClass,
+        const char* resultClass,
+        const char* role,
+        const char* resultRole,
+        const char** properties)
+{
+     CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
+
+     _CMPI_TRACE(1, ("associators() called, ctx %p, rslt %p, op %p,"
+         " assocClass %s, resultClass %s, role %s, resultRole %s",
+         ctx, rslt, op, assocClass, resultClass, role, resultRole));
+
+    _CMPI_TRACE(1, ("associators() %s",
+         (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
+    return status;
+}
+
+/***************************************************************************/
+CMPIStatus ${className}ReferenceNames(
+        CMPIAssociationMI* self,
+        const CMPIContext* ctx,
+        const CMPIResult* rslt,
+        const CMPIObjectPath* op,
+        const char* resultClass,
+        const char* role)
+{
+    CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
+
+    _CMPI_TRACE(1, ("referenceNames() called, ctx %p, rslt %p, op %p,"
+        " resultClass %s, role %s", ctx, rslt, op, resultClass, role));
+
+    _CMPI_TRACE(1, ("referenceNames() %s",
+        (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
+    return status;
+}
+
+
+/***************************************************************************/
+CMPIStatus ${className}References(
+        CMPIAssociationMI* self,
+        const CMPIContext* ctx,
+        const CMPIResult* rslt,
+        const CMPIObjectPath* op,
+        const char* resultClass,
+        const char* role,
+        const char** properties)
+{
+    CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
+
+    _CMPI_TRACE(1, ("references() called, ctx %p, rslt %p, op %p,"
+            " resultClass %s, role %s, properties %p",
+            ctx, rslt, op, resultClass, role, properties));
+
+    _CMPI_TRACE(1, ("references() %s",
+        (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
+    return status;
+}
+
+/***************************************************************************/
+CMPIStatus ${className}InvokeMethod(
+        CMPIMethodMI* self,
+        const CMPIContext* ctx,
+        const CMPIResult* rslt,
+        const CMPIObjectPath* op,
+        const char* method,
+        const CMPIArgs* in,
+        CMPIArgs* out)
+{
+    CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
+
+    _CMPI_TRACE(1, ("invokeMethod() called, ctx %p, rslt %p, op %p, method %s,"
+            " in %p, out %p", ctx, rslt, op, method, in, out));
+
+    _CMPI_TRACE(1, ("invokeMethod() %s",
+        (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
+    return status;
+}
+
+/***************************************************************************/
+
+
+CMMethodMIStub( ${className}, ${className}, _broker, CMNoHook);
+CMInstanceMIStub( ${className}, ${className}, _broker, CMNoHook);
+CMAssociationMIStub( ${className}, ${className}, _broker, CMNoHook);

@@ -1,0 +1,11 @@
+table.nav { width: 100%; }
+td.listing_modes {
+    width: 25%;
+    min-width: 100px;
+    text-align: right;
+}
+td.lineage { width: 75%; }
+td.listing_modes table { margin-left: auto; }
+tr.even { background-color: #EEFFEE; }
+td.cim_schema a { font-style: italic; }
+.listing td:not(.has_kids) a { color: #05058f }

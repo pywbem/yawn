@@ -1,4 +1,12 @@
-use templates !!!
-pass w3c validation
 make some tests
 python 3 support
+
+from original yawn:
+  - Beautify the error screens
+  - Fix various code that is not case insensitive
+  - Display property/method/parameter names from the class instead of the
+    instance, as they will be more likely to be pretty (mixed-case), whereas
+    providers sometimes will have all lowercase property names that don't
+    look as good.
+  - Mark properties on instances that aren't in the schema (it's been known
+    to happen).

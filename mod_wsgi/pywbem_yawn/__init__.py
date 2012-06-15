@@ -31,24 +31,26 @@
 import logging
 import traceback
 import re
+import bisect
 import pywbem
 import pywbem.cim_http
-import cgi
 import types
 import cPickle
 import base64
 import urlparse
-import string
 import zlib
-import os
-import sys
 import inspect
-#import mako
-#import mako.lookup
+import mako
+import mako.lookup
+import mako.exceptions
+import pkg_resources
+from collections import defaultdict
+from itertools import chain
 from werkzeug.wrappers import Response, Request
 from werkzeug.routing import Map, Rule, BaseConverter, ValidationError
 from werkzeug.exceptions import (
         HTTPException, NotFound, Unauthorized, BadRequest)
+from werkzeug.local import Local, release_local
 try:
     from pywbem.cim_provider2 import codegen
 except ImportError:
@@ -56,39 +58,10 @@ except ImportError:
 
 log = logging.getLogger(__name__)
 
-# Mostly I just wanted to be able to say that I've used lambda functions
-#_val2str = lambda x: (type(x) == types.UnicodeType and x or str(x))
-##############################################################################
-# no need to cgi.urllib.unquote_plus().  mod_python does that for us.
-_decodeObject = lambda x: (cPickle.loads(
-    zlib.decompress(base64.urlsafe_b64decode(x))))
-##############################################################################
-_encodeObject = lambda x: (base64.urlsafe_b64encode(
-    zlib.compress(cPickle.dumps(x, cPickle.HIGHEST_PROTOCOL))))
-##############################################################################
-def _val2str(x):
-    #if type(x) == types.UnicodeType:
-    #    return x
-    if x is None:
-        return '<font color="#999999"><i>Null</i></font>'
-    elif isinstance(x,list):
-        rval = '{'
-        if x:
-            for i in range(0, len(x)):
-                item = x[i]
-                if i > 0:
-                    rval+= ', '
-                strItem = _val2str(item)
-                if type(item) in types.StringTypes:
-                    strItem = '"' + strItem + '"'
-                rval+= strItem
-        rval+= '}'
-        return cgi.escape(rval)
-    else:
-        return cgi.escape(unicode(x))
-
-##############################################################################
-_status_codes = [('', '') 
+# *****************************************************************************
+# ERROR HANDLING HELPERS
+# *****************************************************************************
+_status_codes = [('', '')
   ,('FAILED'                      , 'A general error occurred')
   ,('ACCESS_DENIED'               , 'Resource not available')
   ,('INVALID_NAMESPACE'           , 'The target namespace does not exist')
@@ -112,15 +85,17 @@ def _code2string(code):
         return (str(code), "UNKNOWN ERROR")
     return _status_codes[code]
 
-##############################################################################
-def _sortkey(keylist, klass):
-    """Sort a list of property names, but bubble the key classes first
-    in the sorted results."""
-
-    def keycmp(a, b):
-        def is_key(key):
-            klassProp = klass.properties.has_key(key) and klass.properties[key] or None
-            return klassProp and klassProp.qualifiers.has_key('key')
+# *****************************************************************************
+# SORTING HELPERS
+# *****************************************************************************
+def _cmp_pnames(klass):
+    """
+    compare function for sorting property names placing keys before non-keys
+    """
+    def _cmp(a, b):
+        is_key = lambda key: (
+                    klass and klass.properties.has_key(key)
+                and klass.properties[key].qualifiers.has_key('key'))
         is_key_a = is_key(a)
         is_key_b = is_key(b)
         if is_key_a and is_key_b:
@@ -130,17 +105,28 @@ def _sortkey(keylist, klass):
         if not is_key_a and is_key_b:
             return 1
         return cmp(a, b)
-    
-    keylist.sort(keycmp)
+    return _cmp
 
-##############################################################################
+def _cmp_params(klass):
+    _cmp_orig = _cmp_pnames(klass)
+    def _cmp(a, b):
+        if a['is_method'] and not b['is_method']:
+            return -1
+        if not a['is_method'] and b['is_method']:
+            return 1
+        return _cmp_orig(a['name'], b['name'])
+    return _cmp
+
+# *****************************************************************************
+# CIM HIERARCHY TRAVERSAL FUNCTIONS
+# *****************************************************************************
 def getAllHierarchy(conn, url, ns, className):
     hierarchy = []
 
     hierarchy.append(className)
     classNameToCheck = className
     while classNameToCheck != None:
-        subklass = conn.GetClass(classNameToCheck, LocalOnly = False, 
+        subklass = conn.GetClass(classNameToCheck, LocalOnly = False,
                 IncludeQualifiers=True)
         if subklass.superclass != None:
             classNameToCheck = subklass.superclass
@@ -149,38 +135,345 @@ def getAllHierarchy(conn, url, ns, className):
             classNameToCheck = None
     return hierarchy;
 
-##############################################################################
-def isSubClass(req, url, ns, subClassName, parentClassName):
-    conn = _getConn(req, url, ns)
+# *****************************************************************************
+# CIM OBJECTS TO PYTHON BASIC TYPES
+# *****************************************************************************
+def _get_property_details(prop, inst=None):
+    """
+    This should be used only by functions get_class_item_details
+    and get_class_props
+    """
+    if not isinstance(prop, (pywbem.CIMProperty, pywbem.CIMParameter)):
+        raise TypeError('prop must be either CIMProperty or CIMParameter')
+    if (   inst is not None
+       and not isinstance(inst, pywbem.CIMInstance)
+       and not isinstance(inst, pywbem.CIMInstanceName)):
+       raise TypeError('inst must be one of: CIMInstance,'
+               ' CIMInstanceName, None')
+    if inst is not None:
+        if isinstance(inst, pywbem.CIMInstance):
+            _has_prop  = lambda name: name in inst.properties
+            _get_value = lambda name: inst.properties[name].value
+        else: # CIMInstanceName
+            _has_prop  = lambda name: name in inst
+            _get_value = lambda name: inst[name]
 
-    #first the easy case:  are they the same
-    req.write('<br>is ' + subClassName + ' a subclass of ' + parentClassName)
-    if subClassName == parentClassName:
-        return True
-    #now, get the class object for subClassName, see if its parent class is parentClassName
-    classNameToCheck = subClassName
-    while classNameToCheck != None:
-#        req.write('<br>is ' + subClassName + ' a subclass of ' + parentClassName)
-#        req.write('<br>classNameToCheck: ' + classNameToCheck)
-        subklass = conn.GetClass(classNameToCheck, LocalOnly=False, 
-                IncludeQualifiers=True)
-#        req.write('<br>subklass: ' + `subklass`)
-#        req.write('<br>parentClassName: ' + parentClassName)
+    i = { 'valuemap'     : []
+        # string represantations of values in valuemap
+        , 'values'       : {}
+        }
+    i['is_key'] = prop.qualifiers.has_key('key')
+    if prop.is_array:
+        i['is_array'] = prop.is_array
+        i['array_size'] = prop.array_size
+    if prop.reference_class is None:
+        i['type'] = prop.type
+    else:
+        i['type'] = {'className':prop.reference_class}
+        if inst is not None and _has_prop(prop.name):
+            i['type']['ns'] = _get_value(prop.name).namespace
 
-        if subklass.superclass != None:
-#            req.write('<br>subklass.superclass: ' + subklass.superclass)
-            classNameToCheck = subklass.superclass
-            if subklass.superclass == parentClassName:
-                req.write('<br><b>Yes! Returning True</b><br><br>')
-                return True
-#            req.write('<br>new classNameToCheck: ' + classNameToCheck)
-#            req.write('<br><br>')
+    if inst is not None and _has_prop(prop.name):
+        i['value_orig'] = _get_value(prop.name)
+        if (   prop.qualifiers.has_key('values')
+           and prop.qualifiers.has_key('valuemap')):
+            i['value'] = _displayMappedValue(
+                    _get_value(prop.name), prop.qualifiers)
+        elif prop.reference_class is not None:
+            i['value'] = _get_value(prop.name)
         else:
-            classNameToCheck = None
-    req.write('<br><b>Didn\'t find it... returning False</b><br><br>')
-    return False;
+            i['value'] = _val2str(_get_value(prop.name))
 
-##############################################################################
+    if prop.qualifiers.has_key('valuemap'):
+        valmap_quals = prop.qualifiers['valuemap'].value
+        values_quals = None
+        if prop.qualifiers.has_key('values'):
+            values_quals = prop.qualifiers['values'].value
+        for ivq, val in enumerate(valmap_quals):
+            try: pywbem.tocimobj(prop.type, val)
+            except:
+                # skip valuemap items that aren't valid values
+                # such as the numeric ranges for DMTF Reserved and whatnot
+                continue
+            i['valuemap'].append(val)
+            if values_quals and ivq < len(values_quals):
+                i['values'][val] = [values_quals[ivq]]
+            else:
+                i['values'][val] = None
+
+    if isinstance(prop, pywbem.CIMParameter):
+        # TODO is IN assumed to be true if the IN qualifier is missing?
+        i['in'] = (  not prop.qualifiers.has_key('in')
+                  or prop.qualifiers['in'])
+        i['out'] = (  prop.qualifiers.has_key('out')
+                   and prop.qualifiers['out'])
+
+    return i
+
+def get_class_item_details(className, item, inst=None):
+    """
+    @param inst provides some additional info (if given)
+    """
+    if not isinstance(className, basestring):
+        raise TypeError('className must be a string')
+    if not isinstance(item, (pywbem.CIMProperty, pywbem.CIMMethod,
+            pywbem.CIMParameter)):
+        raise TypeError('item must be either CIMProperty, CIMParameter or CIMMethod')
+    if (   inst is not None
+       and not isinstance(inst, (pywbem.CIMInstanceName, pywbem.CIMInstance))):
+        raise TypeError('inst must be one of CIMInstanceName'
+            ', CIMInstance or None')
+
+    i = { 'name'         : item.name
+        , 'is_deprecated': item.qualifiers.has_key('deprecated')
+        # whether the item is declared be current class or
+        # by some parent class
+        , 'is_local'     : False
+        # class, that defines this item (may be None)
+        , 'class_origin' : None
+        , 'is_key'       : False
+        , 'is_array'     : False
+        , 'is_method'    : isinstance(item, pywbem.CIMMethod)
+        , 'is_required'  : item.qualifiers.has_key('required')
+        , 'is_valuemap'  : item.qualifiers.has_key('valuemap')
+        , 'array_size'   : None
+        , 'value'        : None
+        , 'value_orig'   : None
+        # only valid for method
+        , 'args'         : []
+        , 'type'         : "<Unknown>"
+        # all less interesting qualifiers sorted by name
+        , 'qualifiers'   : []
+        }
+
+    if hasattr(item, 'class_origin'):
+        i['is_local'] = item.class_origin == className
+        i['class_origin'] = item.class_origin
+    if item.qualifiers.has_key('description'):
+        i['description'] = item.qualifiers['description'].value
+    else:
+        i['description'] = None
+    for q in sorted(item.qualifiers.values(), key=lambda v: v.name):
+        if q.name.lower() in ('description', 'deprecated', 'key', 'required'): continue
+        i['qualifiers'].append((q.name, _val2str(q.value)))
+    if isinstance(item, (pywbem.CIMProperty, pywbem.CIMParameter)):
+        i.update(_get_property_details(item, inst))
+
+    elif isinstance(item, pywbem.CIMMethod): # CIMMethod
+        i['type'] = item.return_type
+        args = i['args']
+        for p in item.parameters.values():
+            args.append(get_class_item_details(className, p))
+    return i
+
+def get_class_props(klass=None, inst=None, include_all=False):
+    """
+    @param inst may be CIMInstance
+        if given and include_all == False, then only properties
+        defined by provider will be returned
+        if None, then all properties declared be klass will be returned
+    @param include_all if True, then all properties declared by klass
+        and all defined by given instance will be returned
+    @note properties declared by klass != propertied defined be instance,
+        that's why include_all flag is provided
+    @note qualifiers declared be class override those provided by instance
+    @return props: [ { 'name'        : name
+                     , 'type'        : type
+                     , 'value'       : value
+                     , 'description' : description
+                     , 'is_key'      : bool
+                     , 'is_required' : bool
+                     , 'is_array'    : bool
+                     , 'qualifiers'  : [(name, value), ...]
+                     }
+                   , ...
+                   ]
+    if property is not in schema, then type is None and the rest
+        of fields are undefined
+    if type of property is reference, then:
+        type  = {ns : namespace, className: className}
+        value = object_path object
+    """
+    if klass is not None and not isinstance(klass, pywbem.CIMClass):
+        raise TypeError('klass must be object of CIMClass')
+    if (  inst is not None
+       and not isinstance(inst, (pywbem.CIMInstance, pywbem.CIMInstanceName))):
+        raise TypeError('inst must be either CIMInstance,'
+        ' CIMInstanceName or None')
+    if klass is None and inst is None:
+        raise ValueError('klass or inst argument must be given')
+
+    keys = set()
+    if inst is not None:
+        keys = set(inst.keys())
+        if include_all and klass is not None:
+            keys.update(set(klass.properties.keys()))
+    else:
+        keys = klass.properties.keys()
+    keys = sorted(keys, _cmp_pnames(klass))
+
+    props = []
+    for prop_name in keys:
+        iprop = None
+        if (  isinstance(inst, pywbem.CIMInstance)
+           and prop_name in inst.properties):
+            iprop = inst.properties[prop_name]
+        cprop = (  klass.properties[prop_name]
+                if klass and klass.properties.has_key(prop_name) else None)
+        p = { 'name'        : prop_name
+            , 'is_key'      : False
+            , 'is_required' : False
+            , 'is_array'    : False
+            , 'description' : None
+            , 'type'        : '<Unknown>'
+            , 'value'       : None
+            , 'value_orig'  : None
+            , 'qualifiers'  : []
+            , 'is_valuemap' : False
+            }
+        if cprop is not None:
+            p.update(get_class_item_details(klass.classname, cprop, inst))
+        elif iprop is not None:
+            p.update(_get_property_details(iprop, inst))
+        elif isinstance(inst, pywbem.CIMInstanceName):
+            if prop_name in inst:
+                p['is_key'] = True
+                p['is_array'] = isinstance(inst[prop_name], list)
+                p['value'] = _val2str(inst[prop_name])
+                p['value_orig'] = inst[prop_name]
+
+        props.append(p)
+    return props
+
+def get_class_methods(klass):
+    """
+    @return { 'name' : method_name
+            , 'args' : arguments (just names)
+            }
+    """
+    if not isinstance(klass, pywbem.CIMClass):
+        raise TypeError('klass must be a CIMClass object')
+    methods = []
+    for method in klass.methods.values():
+        methods.append((method.name, method.parameters.keys()))
+    return methods
+
+def get_inst_info(inst, klass=None, include_all=False):
+    """
+    @return { 'className'  : className
+            , 'ns'         : namespace
+            , 'path'       : path
+            , 'props'      : [ p1dict, ... ]
+            , 'methods'    : [ m1dict, ... ]
+            , ...
+            }
+    """
+    pth = inst if isinstance(inst, pywbem.CIMInstanceName) else inst.path
+    info = { 'className' : pth.classname
+           , 'ns'        : pth.namespace
+           , 'host'      : pth.host
+           , 'props'     : get_class_props(klass, inst, include_all)
+           , 'path'      : pth
+           , 'methods'   : []
+           }
+    if klass is not None:
+        info['methods'] = get_class_methods(klass)
+    return info
+
+def get_method_params(className, cimmethod):
+    """
+    @return (in_params, out_params)
+    where both are list of dictionaries
+    """
+    in_params  = []
+    out_params = []
+
+    if not isinstance(cimmethod, pywbem.CIMMethod):
+        raise TypeError('cimmethod must be instance of pywbem.CIMMethod')
+    for param in cimmethod.parameters.values():
+        details = get_class_item_details(className, param)
+        if details['in']:  in_params.append(details)
+        if details['out']: out_params.append(details)
+
+    return (in_params, out_params)
+
+# *****************************************************************************
+# PYTHON BASIC TYPES TO CIM OBJECTS
+# *****************************************************************************
+
+# parses base64 encoded string to python object (used for CIMInstanceNames)
+_decodeObject = lambda x: (cPickle.loads(
+    zlib.decompress(base64.urlsafe_b64decode(x))))
+
+def formvalue2cimobject(param, prefix, formdata):
+    """
+    @param is a dictionary created by get_class_item_details
+    @return value passable to pywbem methods
+    """
+    def value(name):
+        return formdata[prefix + name]
+    def process_simple_value(val):
+        dt = param['type']
+        if isinstance(dt, dict): # reference
+            if not val: return None
+            return _decodeObject(val)
+        return pywbem.tocimobj(dt, val)
+
+    if param['is_array']:
+        result = []
+        if param['is_valuemap']:
+            for val in param['valuemap']:
+                if ("%s%s-%s"%(prefix, param['name'], val)) in formdata:
+                    result.append(val)
+        else:
+            if not (prefix + param['name'] + '.size') in formdata:
+                return
+            if param['array_size'] is None:
+                size = int(value(param['name'] + '.size'))
+            else:
+                size = param['array_size']
+            for i in range(size):
+                result.append(process_simple_value(
+                    value(param['name'] + '-' + str(i))))
+    else:
+        result = process_simple_value(value(param['name']))
+    return result
+
+# *****************************************************************************
+# RENDERING UTILITIES
+# *****************************************************************************
+
+# encodes python object to base64 encoding (used for CIMInstanceNames)
+_encodeObject = lambda x: (base64.urlsafe_b64encode(
+    zlib.compress(cPickle.dumps(x, cPickle.HIGHEST_PROTOCOL))))
+
+class SafeString(unicode):
+    """
+    when this type of string is passed to template, it will be not escaped
+    upon rendering if safe param is True
+    """
+    def __init__(self, text):
+        unicode.__init__(self, text)
+        self.safe = True
+
+def _val2str(x):
+    if x is None:
+        return SafeString('<span class="null_val">Null</span>')
+    if isinstance(x,list):
+        rval = '{'
+        if x:
+            for i in range(0, len(x)):
+                item = x[i]
+                if i > 0:
+                    rval+= ', '
+                strItem = _val2str(item)
+                if type(item) in types.StringTypes:
+                    strItem = '"' + strItem + '"'
+                rval+= strItem
+        rval+= '}'
+        return rval
+    return unicode(x)
+
 def _displayMappedValue(val, quals):
     rval = ''
     if isinstance(val, list):
@@ -199,408 +492,75 @@ def _displayMappedValue(val, quals):
             valIdx = valmapQual.index(propstr)
             if valIdx < len(valuesQual):
                 rval+= ' ('+valuesQual[valIdx]+')'
-
     if isinstance(val, list):
         rval+= '}'
-    return rval
+    return SafeString(rval)
 
-##############################################################################
-def _printInstHeading(keys, includeNS=False, omitGetLink = False):
-    ht =     '  <tr bgcolor="CCCCCC">\n'
-    if not omitGetLink:
-        ht+=     '    <th></th>\n'
-    for key in keys:
-        ht+= '    <th>'+key+'</th>\n'
-    if includeNS:
-        ht+= '<th><i><font color="#00AA00">Namespace</font></i></th>'
-    ht+=     '  </tr>\n'
-    return ht
-_re_url_func = re.compile(r'^[A-Z][a-z_A-Z0-9]+$')
-
-##############################################################################
-def _baseScript(request):
-    global url_funcs
-    path_parts = [p for p in 
-        request.environ['SCRIPT_NAME'].split('/') if p ]
-    if len(path_parts) and  _re_url_func.match(path_parts[-1]):
-        try:
-            if inspect.isfunction(eval(path_parts[-1])):
-                path_parts.pop(len(path_parts) - 1)
-        except: pass
-    if len(path_parts) and path_parts[-1].startswith('index.'):
-        path_parts.pop(len(path_parts[-1]))
-    return "/" + "/".join(path_parts)
-
-##############################################################################
-# TODO
-"""
-- Make GetClass links on REF type fields for properties and parameters.
-- Refactor some of the code to display properties and parameters to
-  decrease code duplication (such as handling of valuemaps)
-- Fix the javascript combobox to actually send typed values instead of
-  just look cute.
-- Beautify the error screens
-- Fix various code that is not case insensitive
-- Display property/method/parameter names from the class instead of the
-  instance, as they will be more likely to be pretty (mixed-case), whereas
-  providers sometimes will have all lowercase property names that don't
-  look as good.
-- Mark properties on instances that aren't in the schema (it's been known
-  to happen).
-
-
-"""
-
-##############################################################################
-# Older stuff
-##############################################################################
-# Combobox support from
-# http://particletree.com/features/upgrade-your-select-element-to-a-combo-box/
-# This isn't currently working (typed values aren't sent).
-# http://particletree.com/features/upgrade-your-select-element-to-a-combo-box/#6606
-_comboBox_js = """
-<!-- Removed combobox script for now.  If we need it, go get it (and get it working) -->
-"""
-
-
-
-def cmpi_codegen(klass):
-    code = '''/* <Insert License Here> */
-
-#include <stdio.h>
-#include <stdarg.h>
-
-#include <cmpi/cmpidt.h>
-#include <cmpi/cmpift.h>
-#include <cmpi/cmpimacs.h>
-
-/* A simple stderr logging/tracing facility. */
-#ifndef _CMPI_TRACE
-#define _CMPI_TRACE(tracelevel,args) _logstderr args 
-static void _logstderr(char *fmt,...)
-{
-   va_list ap;
-   va_start(ap,fmt);
-   vfprintf(stderr,fmt,ap);
-   va_end(ap);
-   fprintf(stderr,"\\n");
-}
-#endif
-
-/* Global handle to the CIM broker. This is initialized by the CIMOM when the provider is loaded */
-static const CMPIBroker * _broker = NULL;
-
-static CMPIStatus %(cname)sCleanup(CMPIInstanceMI * self,
-                                   const CMPIContext * ctx,
-                                   CMPIBoolean terminating)
-{
-    CMPIStatus st = { CMPI_RC_OK, NULL }; 
-    return st; 
-}
-
-static CMPIStatus %(cname)sEnumInstanceNames(CMPIInstanceMI * self,
-                                             const CMPIContext * ctx,
-                                             const CMPIResult * rslt,
-                                             const CMPIObjectPath * op)
-{
-    _CMPI_TRACE(1,("%(cname)sEnumInstanceNames() called, ctx %%p, result %%p, op %%p", ctx, rslt, op));
-    CMPIStatus status = {CMPI_RC_OK, NULL};
-
-    CMPIString* cns = CMGetNamespace(op, &status); 
-    char* ns = CMGetCharsPtr(cmstr, &status); 
-    CMPIString* ccname = CMGetClassName(op, &status); 
-    char* cname = CMGetCharsPtr(ccname, &status); 
-    CMPIObjectPath* cop = CMNewObjectPath(_broker, ns, cname, &status); 
-    CMReturnObjectPath(rslt, cop);
-    CMReturnDone(rslt); 
-    status.rc = CMPI_RC_OK; 
-    status.msg = NULL; 
-
-    _CMPI_TRACE(1,("%(cname)sEnumInstanceNames() %%s", (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
-    return status;
-}
-
-static CMPIStatus %(cname)sEnumInstances(
-        CMPIInstanceMI * self,
-		const CMPIContext * ctx,
-		const CMPIResult * rslt,
-		const CMPIObjectPath * op,
-		const char ** properties)
-{
-   CMPIStatus status = {CMPI_RC_OK, NULL};	
-
-    _CMPI_TRACE(1,("%(cname)sEnumInstances() called, ctx %%p, rslt %%p, op %%p, properties %%p", ctx, rslt, op, properties));
-
-	//CMReturnInstance(rslt, getSSHServiceInstance(&status)); 
-	CMReturnDone(rslt); 
-
-   status.rc = CMPI_RC_OK; 
-   status.msg = NULL; 
-
-   _CMPI_TRACE(1,("%(cname)sEnumInstances() %%s", (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
-   return status;
-}
-
-static CMPIStatus %(cname)sGetInstance(
-		CMPIInstanceMI * self,
-		const CMPIContext * ctx,
-		const CMPIResult * rslt,
-		const CMPIObjectPath * op,
-		const char ** properties)
-{
-   CMPIStatus status = {CMPI_RC_OK, NULL};
-
-    _CMPI_TRACE(1,("%(cname)sGetInstance() called, ctx %%p, rslt %%p, op %%p, properties %%p", ctx, rslt, op, properties));
-
-	//CMReturnInstance(rslt, getSSHServiceInstance(&status)); 
-	CMReturnDone(rslt); 
-
-   status.rc = CMPI_RC_OK; 
-   status.msg = NULL; 
-
-   _CMPI_TRACE(1,("%(cname)sGetInstance() %%s", (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
-   return status;
-}
-
-static CMPIStatus %(cname)sCreateInstance(
-		CMPIInstanceMI * self,
-		const CMPIContext * ctx,
-		const CMPIResult * rslt,
-		const CMPIObjectPath * op,
-		const CMPIInstance * inst)
-{
-   CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
-   
-    _CMPI_TRACE(1,("%(cname)sCreateInstance() called, ctx %%p, rslt %%p, op %%p, inst %%p", ctx, rslt, op, inst));
-   _CMPI_TRACE(1,("%(cname)sCreateInstance() %%s", (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
-   return status;
-}
-
-
-// ----------------------------------------------------------------------------
-
-#ifdef CMPI_VER_100
-#define %(cname)sSetInstance %(cname)sModifyInstance
-#endif
-
-static CMPIStatus %(cname)sSetInstance(
-		CMPIInstanceMI * self,
-		const CMPIContext * ctx,
-		const CMPIResult * rslt,
-		const CMPIObjectPath * op,
-		const CMPIInstance * inst,
-		const char ** properties)
-{
-   CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
-   
-    _CMPI_TRACE(1,("%(cname)sSetInstance() called, ctx %%p, rslt %%p, op %%p, inst %%p, properties %%p", ctx, rslt, op, inst, properties));
-   _CMPI_TRACE(1,("%(cname)sSetInstance() %%s", (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
-   return status;
-}
-
-// ----------------------------------------------------------------------------
-
-
-/* DeleteInstance() - delete/remove the specified instance. */
-static CMPIStatus %(cname)sDeleteInstance(
-		CMPIInstanceMI * self,	
-		const CMPIContext * ctx,
-		const CMPIResult * rslt,	
-		const CMPIObjectPath * op)
-{
-   CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
-
-    _CMPI_TRACE(1,("%(cname)sDeleteInstance() called, ctx %%p, rslt %%p, op %%p", ctx, rslt, op));
-   _CMPI_TRACE(1,("%(cname)sDeleteInstance() %%s", (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
-   return status;
-}
-
-// ----------------------------------------------------------------------------
-
-
-static CMPIStatus %(cname)sExecQuery(
-		CMPIInstanceMI * self,
-		const CMPIContext * ctx,
-		const CMPIResult * rslt,
-		const CMPIObjectPath * op,
-		const char * query,
-		const char * lang)
-{
-   CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};	/* Return status of CIM operations. */
-   
-    _CMPI_TRACE(1,("%(cname)sExecQuery() called, ctx %%p, rslt %%p, op %%p, query %%s, lang %%s", ctx, rslt, op, query, lang));
-   _CMPI_TRACE(1,("%(cname)sExecQuery() %%s", (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
-   return status;
-}
-
-//  associatorMIFT
-//
-
-CMPIStatus %(cname)sAssociatorNames(
-		CMPIAssociationMI* self,
-		const CMPIContext* ctx,
-		const CMPIResult* rslt,
-		const CMPIObjectPath* op,
-		const char* assocClass,
-		const char* resultClass,
-		const char* role,
-		const char* resultRole)
-{
-   	CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
-   
-    _CMPI_TRACE(1,("associatorNames() called, ctx %%p, rslt %%p, op %%p, assocClass %%s, resultClass %%s, role %%s, resultRole %%s", ctx, rslt, op, assocClass, resultClass, role, resultRole));
-
-   _CMPI_TRACE(1,("associatorNames() %%s", (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
-   return status;
-}
-
-/***************************************************************************/
-CMPIStatus %(cname)sAssociators(
-		CMPIAssociationMI* self,
-		const CMPIContext* ctx,
-		const CMPIResult* rslt,
-		const CMPIObjectPath* op,
-		const char* assocClass,
-		const char* resultClass,
-		const char* role,
-		const char* resultRole,
-		const char** properties)
-{
-   	CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
-   
-    _CMPI_TRACE(1,("associators() called, ctx %%p, rslt %%p, op %%p, assocClass %%s, resultClass %%s, role %%s, resultRole %%s", ctx, rslt, op, assocClass, resultClass, role, resultRole));
-
-   _CMPI_TRACE(1,("associators() %%s", (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
-   return status;
-}
-
-/***************************************************************************/
-CMPIStatus %(cname)sReferenceNames(
-		CMPIAssociationMI* self,
-		const CMPIContext* ctx,
-		const CMPIResult* rslt,
-		const CMPIObjectPath* op,
-		const char* resultClass,
-		const char* role)
-{
-   	CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
-   
-    _CMPI_TRACE(1,("referenceNames() called, ctx %%p, rslt %%p, op %%p, resultClass %%s, role %%s", ctx, rslt, op, resultClass, role));
-
-   _CMPI_TRACE(1,("referenceNames() %%s", (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
-   return status;
-}
-
-
-/***************************************************************************/
-CMPIStatus %(cname)sReferences(
-		CMPIAssociationMI* self,
-		const CMPIContext* ctx,
-		const CMPIResult* rslt,
-		const CMPIObjectPath* op,
-		const char* resultClass,
-		const char* role,
-		const char** properties)
-{
-   	CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
-   
-    _CMPI_TRACE(1,("references() called, ctx %%p, rslt %%p, op %%p, resultClass %%s, role %%s, properties %%p", ctx, rslt, op, resultClass, role, properties));
-
-   _CMPI_TRACE(1,("references() %%s", (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
-   return status;
-}
-
-/***************************************************************************/
-CMPIStatus %(cname)sInvokeMethod(
-		CMPIMethodMI* self,
-		const CMPIContext* ctx,
-		const CMPIResult* rslt,
-		const CMPIObjectPath* op,
-		const char* method,
-		const CMPIArgs* in,
-		CMPIArgs* out)
-{
-   	CMPIStatus status = {CMPI_RC_ERR_NOT_SUPPORTED, NULL};
-   
-    _CMPI_TRACE(1,("invokeMethod() called, ctx %%p, rslt %%p, op %%p, method %%s, in %%p, out %%p", ctx, rslt, op, method, in, out));
-
-   _CMPI_TRACE(1,("invokeMethod() %%s", (status.rc == CMPI_RC_OK)? "succeeded":"failed"));
-   return status;
-}
-
-/***************************************************************************/
-
-
-CMMethodMIStub( %(cname)s, %(cname)s, _broker, CMNoHook); 
-CMInstanceMIStub( %(cname)s, %(cname)s, _broker, CMNoHook); 
-CMAssociationMIStub( %(cname)s, %(cname)s, _broker, CMNoHook); 
-
-
-''' % {'cname':klass.classname} 
-    return code
-
+# *****************************************************************************
+# DECORATORS
+# *****************************************************************************
 GET, POST, GET_AND_POST = 1, 2, 3
 def view(
-        http_method=GET,
-        require_url=True,
-        require_ns=True,
-        returns_response=False):
+        http_method      = GET,
+        require_url      = True,
+        require_ns       = True,
+        returns_response = False):
+
     def _form_val(f, k, pop=True):
         v =  f.pop(k) if pop else f[k]
         if isinstance(v, list):
             if not len(v): return None
             return v[0]
         return v
+
+    def _store_var(storage, req, var_name, required, form, args, kwargs):
+        """
+        params form and kwargs may get modified by this function
+        """
+        if getattr(storage, var_name, None) is not None: return
+        setattr(storage, var_name, kwargs.pop(var_name, None))
+        if http_method & GET:
+            try: setattr(storage, var_name, req.args[var_name])
+            except KeyError: pass
+        if getattr(storage, var_name) is None and http_method & POST:
+            try: setattr(storage, var_name, _form_val(form, var_name))
+            except KeyError: pass
+        if required and getattr(storage, var_name) is None:
+            raise BadRequest("missing '%s' argument"%var_name)
+        return getattr(storage, var_name)
+
     def _deco(f):
-        def _new_f(self, request, *args, **kwargs):
-            form = request.form.copy()
+        def _new_f(self, *args, **kwargs):
+            """
+            @param self is instance of Yawn handler
+            """
+            req = self._local.request
+            form = req.form.copy()
             for k in kwargs:
                 if k in form:
                     del form[k]
-            if require_url and ("url" not in kwargs or kwargs['url'] is None):
-                kwargs['url'] = None
-                if not 'ns' in kwargs:
-                    kwargs['ns'] = None
-                if http_method & GET:
-                    try:
-                        kwargs['url'] = request.args['url']
-                        if kwargs['ns'] is None:
-                            kwargs['ns'] = request.args['ns']
-                    except KeyError: pass
-                if kwargs['url'] is None and http_method & POST:
-                    try:
-                        kwargs['url'] = _form_val(form, 'url')
-                        if kwargs['ns'] is None:
-                            kwargs['ns'] = _form_val(form, 'ns')
-                    except KeyError: pass
-                if require_url is True and kwargs['url'] is None:
-                    raise BadRequest("missing url argument")
-                if require_ns is True and kwargs['ns'] is None:
-                    raise BadRequest("missing namespace argument")
-            if not require_url and 'url' in kwargs and not kwargs['url']:
-                del kwargs['url']
-            if not require_ns and 'ns' in kwargs and not kwargs['ns']:
-                del kwargs['ns']
+            for var_name, required in ( ('url', require_url)
+                                      , ('ns', require_ns)):
+                _store_var(self._local, req, var_name, required,
+                        form, args, kwargs)
             if http_method & POST:
                 for k, v in form.items():
                     if isinstance(v, list):
                         if not len(v): continue
                         v = v[0]
                     kwargs[k] = v
-            res = f(self, request, *args, **kwargs)
+            res = f(self, *args, **kwargs)
             if returns_response is True:
                 return res
             self.response.data = res
             return self.response
         return _new_f
+
     return _deco
 
-def _getUserPW(request):
-    if 'Authorization' not in request.headers:
-        return (None, None)
-    auth = request.authorization
-    return (auth.username, auth.password)
-
+# *****************************************************************************
+# URL CONVERTERS
+# *****************************************************************************
 class URLConverter(BaseConverter):
 
     def __init__(self, url_map):
@@ -672,11 +632,12 @@ class Base64Converter(BaseConverter):
         return _decodeObject(str(value))
 
     def to_url(self, value):
+        if isinstance(value, basestring):
+            return value
         return _encodeObject(value)
 
 QLANG_WQL = 0
 query_languages = ["WQL"]
-
 class QLangConverter(BaseConverter):
 
     def __init__(self, url_map):
@@ -689,118 +650,212 @@ class QLangConverter(BaseConverter):
     def to_url(self, value):
         return query_languages[value]
 
+AC_ASSOCIATORS, AC_ASSOCIATOR_NAMES, AC_REFERENCES, AC_REFERENCE_NAMES = \
+        range(4)
+assoc_calls = [ 'associators', 'associatornames'
+              , 'references', 'referencenames' ]
+assoc_call_labels = [ 'Associators', 'Associator Names'
+                    , 'References', 'Reference Names' ]
+class AssocCallConverter(BaseConverter):
+
+    def __init__(self, url_map):
+        BaseConverter.__init__(self, url_map)
+        self.regex = r'(?i)(?:%s)'%'|'.join(assoc_calls)
+
+    def to_python(self, value):
+        if value.lower() not in assoc_calls:
+            raise ValueError('association call must be one of: [%s]' %
+                    ', '.join(AssocCallConverter._vals))
+        return assoc_calls.index(value.lower())
+
+    def to_url(self, value):
+        return assoc_calls[value]
+
+# *****************************************************************************
+# URL AND HTML TOOLS
+# *****************************************************************************
+_re_url_func = re.compile(r'^[A-Z][a-z_A-Z0-9]+$')
+def _base_script(request):
+    global url_funcs
+    path_parts = [p for p in
+        request.environ['SCRIPT_NAME'].split('/') if p ]
+    if len(path_parts) and  _re_url_func.match(path_parts[-1]):
+        try:
+            if inspect.isfunction(eval(path_parts[-1])):
+                path_parts.pop(len(path_parts) - 1)
+        except: pass
+    if len(path_parts) and path_parts[-1].startswith('index.'):
+        path_parts.pop(len(path_parts[-1]))
+    return "/" + "/".join(path_parts)
+
+def _get_user_pw(request):
+    if 'Authorization' not in request.headers:
+        return (None, None)
+    auth = request.authorization
+    return (auth.username, auth.password)
+
+url_map = Map([
+    Rule('/', endpoint='index'),
+    Rule('/AssociatedClasses/<id:className>',
+        endpoint="AssociatedClasses"),
+    Rule('/AssociatorNames/<base64:path>', endpoint="AssociatorNames"),
+    Rule('/CMPIProvider/<id:className>', endpoint="CMPIProvider"),
+    Rule('/CreateInstance/<id:className>', endpoint='CreateInstance'),
+    Rule('/CreateInstancePrep/<id:className>',
+        endpoint='CreateInstancePrep'),
+    Rule('/DeleteClass/<id:className>', endpoint='DeleteClass'),
+    Rule('/DeleteInstance/<base64:path>',
+        endpoint='DeleteInstance'),
+    Rule('/EnumClassNames', endpoint='EnumClassNames'),
+    Rule('/EnumInstanceNames/<id:className>',
+        endpoint='EnumInstanceNames'),
+    Rule('/EnumInstances/<id:className>', endpoint='EnumInstances'),
+    Rule('/EnumNamespaces', endpoint='EnumNamespaces'),
+    Rule('/FiltereredReferenceNames/<base64:path>',
+        endpoint='FilteredReferenceNames'),
+    Rule('/FilteredReferenceNamesDialog/<base64:path>',
+        endpoint="FilteredReferenceNamesDialog"),
+    Rule('/GetClass/<id:className>', endpoint='GetClass'),
+    Rule('/GetInstance/path/<base64:path>',
+        endpoint='GetInstance'),
+    Rule('/GetInstance/cn/<id:className>', endpoint='GetInstance'),
+    Rule("/GetInstD/<id:className>", endpoint="GetInstD"),
+    Rule("/InvokeMethod/<id:method>/cn/<id:className>",
+        endpoint="InvokeMethod"),
+    Rule("/InvokeMethod/<id:method>/path/<base64:path>",
+        endpoint="InvokeMethod"),
+    Rule('/Login', endpoint='Login'),
+    Rule('/Logout', endpoint='Logout'),
+    Rule("/ModifyInstance/<base64:path>",
+        endpoint="ModifyInstance"),
+    Rule("/ModifyInstPrep/<base64:path>",
+        endpoint="ModifyInstPrep"),
+    Rule("/MofComp", endpoint="MofComp"),
+    Rule("/Pickle/<base64:path>", endpoint="Pickle"),
+    Rule("/PrepMethod/<id:method>/cn/<id:className>",
+        endpoint="PrepMethod"),
+    Rule("/PrepMethod/<id:method>/path/<base64:path>",
+        endpoint="PrepMethod"),
+    Rule("/PrepMofComp", endpoint="PrepMofComp"),
+    Rule("/PyProvider/<id:className>", endpoint="PyProvider"),
+    Rule("/Query", endpoint="Query"),
+    Rule("/Query/<qlang:lang>", endpoint="Query"),
+    Rule('/QueryD', endpoint='QueryD'),
+    Rule("/ReferenceNames/<base64:path>",
+        endpoint="ReferenceNames"),
+    ], converters =
+        { 'id'     : IdentifierConverter
+        , 'mode'   : ModeConverter
+        , 'bool'   : BooleanConverter
+        , 'base64' : Base64Converter
+        , 'qlang'  : QLangConverter
+        #, 'ac'     : AssocCallConverter
+        })
+
+# *****************************************************************************
+# HANDLER
+# *****************************************************************************
 class Yawn(object):
 
-    def __init__(self, templates="templates", modules=None):
-        self.url_map = Map([
-            Rule('/', endpoint='index'),
-            Rule('/AssociatedClasses/<id:className>',
-                endpoint="AssociatedClasses"),
-            Rule('/AssociatorNames/<base64:obj>', endpoint="AssociatorNames"),
-            Rule('/CMPIProvider/<id:className>', endpoint="CMPIProvider"),
-            Rule('/CreateInstance/<id:className>', endpoint='CreateInstance'),
-            Rule('/CreateInstancePrep/<id:className>',
-                endpoint='CreateInstancePrep'),
-            Rule('/DeleteClass/<id:className>', endpoint='DeleteClass'),
-            Rule('/DeleteInstance/<base64:obj>',
-                endpoint='DeleteInstance'),
-            Rule('/EnumClassNames', endpoint='EnumClassNames'),
-            Rule('/EnumInstanceNames/<id:className>',
-                endpoint='EnumInstanceNames'),
-            Rule('/EnumInstrumentedClassNames',
-                endpoint='EnumInstrumentedClassNames'),
-            Rule('/EnumInstances/<id:className>', endpoint='EnumInstances'),
-            Rule('/EnumNamespaces', endpoint='EnumNamespaces'),
-            Rule('/FiltereredReferenceNames',
-                endpoint='FilteredReferenceNames'),
-            Rule('/FilteredReferenceNamesDialog/<base64:obj>',
-                endpoint="FilteredReferenceNamesDialog"),
-            Rule('/GetClass/<id:className>', endpoint='GetClass'),
-            Rule('/GetInstance/inst/<base64:obj>',
-                endpoint='GetInstance'),
-            Rule('/GetInstance/cn/<id:className>', endpoint='GetInstance'),
-            Rule("/GetInstD/<id:className>", endpoint="GetInstD"),
-            Rule("/InvokeMethod/<base64:obj>/<id:method>",
-                endpoint="InvokeMethod"),
-            Rule('/Login', endpoint='Login'),
-            Rule('/Logout', endpoint='Logout'),
-            Rule("/ModifyInstance/<base64:obj>",
-                endpoint="ModifyInstance"),
-            Rule("/ModifyInstPrep/<base64:obj>",
-                endpoint="ModifyInstPrep"),
-            Rule("/MofComp", endpoint="MofComp"),
-            Rule("/Pickle/<base64:obj>", endpoint="Pickle"),
-            Rule("/PrepMethod/<base64:obj>/<id:method>",
-                endpoint="PrepMethod"),
-            Rule("/PrepMofComp", endpoint="PrepMofComp"),
-            Rule("/PyProvider/<id:className>", endpoint="PyProvider"),
-            Rule("/Query", endpoint="Query"),
-            Rule("/Query/<qlang:lang>", endpoint="Query"),
-            Rule('/QueryD', endpoint='QueryD'),
-            Rule("/ReferenceNames/<base64:obj>",
-                endpoint="ReferenceNames"),
-            ], converters =
-                { 'id'     : IdentifierConverter
-                , 'mode'   : ModeConverter
-                , 'bool'   : BooleanConverter
-                , 'base64' : Base64Converter
-                , 'qlang'  : QLangConverter })
-
-#        self._lookup = mako.lookup.TemplateLookup(
-#                directories=templates,
-#                module_directory=modules
-#        )
-        self.urls = None
-        self._connection = None
-        self._response = None
-        self._color = True
+    def __init__(self,
+            templates     = None,
+            modules       = None,
+            static_prefix = None,
+            debug         = False):
+        
+        if templates is None:
+            templates = pkg_resources.resource_filename(__name__, 'templates')
+            log.debug('templates directory: {}'.format(templates))
+        self._lookup = mako.lookup.TemplateLookup(
+                directories      = templates,
+                module_directory = modules
+        )
+        self._static_prefix = static_prefix
+        self._debug = debug
+        self._local = Local()
 
     @property
     def response(self):
-        if self._response is None:
-            self._response = Response(content_type="text/html")
-        return self._response
+        try:
+            return self._local.response
+        except AttributeError:
+            resp = Response(content_type="text/html")
+            try:
+                url = self._local.url
+                resp.headers['WWW-Authenticate'] = (
+                        ', '.join([ 'Basic realm="CIMOM at %s"'%url
+                                  , 'qop="auth,auth-int"']))
+            except AttributeError: pass
+            self._local.response = resp
+            return resp
 
     @property
-    def color(self):
-        return self._color
+    def static_prefix(self):
+        try:
+            return self._local.static_prefix
+        except AttributeError:
+            if self._static_prefix is None:
+                self._local.static_prefix = (
+                        _base_script(self._local.request) + '/static')
+            else:
+                self._local.static_prefix = self._static_prefix
+            return self._local.static_prefix
 
-    def _toggle_color(self):
-        self._color = not self._color
-        return self._color
+    @property
+    def urls(self):
+        try:
+            return self._local.urls
+        except AttributeError:
+            self._local.urls = url_map.bind_to_environ(
+                    self._local.request.environ)
+            return self._local.urls
 
-    def conn(self, request, url, ns):
-        if (   self._connection
-           and self._connection.url == url
-           and self._connection.default_namespace == ns):
+    @property
+    def conn(self):
+        url = self._local.url
+        ns  = self._local.ns
+        if (   hasattr(self._local, 'connection')
+           and self._local.connection.url == url
+           and self._local.connection.default_namespace == ns):
             return self._connection
 
-        (user, pw) = _getUserPW(request)
+        req = self._local.request
+        (user, pw) = _get_user_pw(req)
         if user is None:
             user = ''
         if pw is None:
             pw = ''
-        if len(user) > 0 and request.cookies.has_key('yawn_logout'):
-            if request.cookies['yawn_logout'] in ['true', 'pending']:
+        if (   len(user) > 0
+           and req.cookies.has_key('yawn_logout')):
+            if req.cookies['yawn_logout'] in ['true', 'pending']:
                 self.response.set_cookie('yawn_logout', 'false',
-                        path=_baseScript(request))
+                        path=_base_script(req))
                 user, pw = '', ''
-        self._connection = pywbem.WBEMConnection(url, (user, pw))
-        self._connection.default_namespace = ns
-        self._connection.debug = True
-        return self._connection
+        self._local.connection = pywbem.WBEMConnection(url, (user, pw))
+        self._local.connection.default_namespace = ns
+        self._local.connection.debug = True
+        return self._local.connection
+
+    def render(self, template, **kwargs):
+        kwargs['urls']   = self.urls
+        kwargs['static'] = self.static_prefix
+        kwargs['conn']   = getattr(self._local, 'connection', None)
+        kwargs['url']    = getattr(self._local, 'url', None)
+        kwargs['ns']     = getattr(self._local, 'ns', None)
+        try:
+            return self._lookup.get_template(template).render(**kwargs)
+        except:
+            return mako.exceptions.html_error_template().render()
 
     def dispatch_request(self, request):
-        adapter = self.url_map.bind_to_environ(request.environ)
+        self._local.request = request
         try:
-            endpoint, values = adapter.match()
-            return getattr(self, 'on_' + endpoint)(request, **values)
+            endpoint, values = self.urls.match()
+            return getattr(self, 'on_' + endpoint)(**values)
         except HTTPException, e:
             return e
 
     def wsgi_app(self, environ, start_response):
-        if self.urls is None:
-            self.urls = self.url_map.bind_to_environ(environ)
         request = Request(environ)
         response = self.dispatch_request(request)
         return response(environ, start_response)
@@ -814,598 +869,128 @@ class Yawn(object):
             response.status_code = unresp.status_code
             response.data = unresp.data
             return response(environ, start_response)
+
         except pywbem.CIMError as arg:
-            ht = self._printHead('Error')
-            details = _code2string(arg[0])
-            ht+= '<p><i>'+details[0]+': ' + details[1]+'</i>'
             errstr = arg[1]
             if errstr.startswith('cmpi:'):
                 # we have a traceback from CMPI, that might have newlines
-                # converted.  need to convert them back. 
+                # converted.  need to convert them back.
                 errstr = errstr[5:].replace('<br>', '\n')
             elif 'cmpi:Traceback' in errstr:
                 errstr = errstr.replace('cmpi:Traceback', 'Traceback')
                 errstr = errstr.replace('<br>', '\n')
-            ht+= '<pre>'+cgi.escape(errstr)+'</pre>'
-            ht+= '<hr>'
-            if self._connection is not None and self._connection.debug is True:
-                if self._connection.last_request is not None:
-                    ht+= '<pre>'+cgi.escape(self._connection.last_request)
-                    ht+= '</pre>'
-                ht+= '<hr>'
-                if self._connection.last_reply is not None:
-                    ht+= '<pre>'+cgi.escape(self._connection.last_reply)
-                    ht+= '</pre>'
-            ht+= '</body></html>'
-            response = Response(ht, content_type="text/html")
+            self._local.request = Request(environ)
+            output = self.render('cim_error.mako',
+                error   = '%s: %s' % _code2string(arg[0]),
+                details = errstr)
+            response = self.response
+            response.data = output
             return response(environ, start_response)
+
         except Exception:
-            output = traceback.format_exc()
-#        output = traceback.format_exc()
-#        log.error(output)
-#        output += """\nThe env dictionary:\n%s""" % (
-#                "\n".join("%s: %s"%(k, v) for k, v in env.items()))
-            response = Response(output, content_type='text/plain')
-            return response(environ, start_response)
+            if not self._debug:
+                output = traceback.format_exc()
+                response = Response(output, content_type='text/plain')
+                return response(environ, start_response)
+            raise
+
         finally:
-            self._connection = None
-            self._response = None
-            self._color = True
+            release_local(self._local)
 
-    def _frontMatter(self, request, url, ns):
-        """ @return (response, pywbem connection) """
-        resp = self.response
-        resp.headers['WWW-Authenticate'] = (
-                ', '.join([ 'Basic realm="CIMOM at {}"'.format(url)
-                          , 'qop="auth,auth-int"']))
-        return self.conn(request, url, ns)
-
-    def _makeHref(self, request, func, dict, target, append=''):
-        return ( '<a href="'+self.urls.build(func, dict)
-               + append + '">'+cgi.escape(target)+'</a>')
-
-    def _makeHrefWithTags(self, env, func, dict, target, openTags, closeTags):
-        return ( '<a href="'+self.urls.build(func, dict)
-               +'">'+openTags+cgi.escape(target) + closeTags+'</a>')
-
-    def _printHead(self, title = None, heading = None,
-            req = None, urlargs = None):
-        ht = '\n<html><head><title>YAWN: CIM'
-        if title is not None:
-            ht+= ' ' + title
-        ht+= '</title></head><body link="#0000ff" >'
-        table = False
-        if req is not None:
-            table = True
-        if table:
-            ht+= '<table border=0 cellpadding=0 cellspacing=0 vspace=0>'
-            ht+= '<tr><td nowrap width=100% valign=top>'
-            if heading is not None:
-                ht+= '<h1>'+heading+'</h1>'
-            ht+= '</td>'
-            if urlargs and 'ns' in urlargs and 'url' in urlargs:
-                lurlargs = {'ns':urlargs['ns'], 'url':urlargs['url']}
-                ht+= '<td valign=top nowrap align=right><font size=-1><i>'
-                ht+= self._makeHref(req, 'EnumClassNames', lurlargs,
-                        lurlargs['ns'])
-                ht+= '&nbsp;&nbsp;&nbsp;</i></td>'
-            if urlargs and 'url' in urlargs:
-                ht+= '<td valign=top nowrap align=right><font size=-1><i>'
-                ht+= self._makeHref(req, 'EnumNamespaces',
-                        {'url':urlargs['url']}, 'Namespaces')
-                ht+= '&nbsp;&nbsp;&nbsp;</i></td>'
-            if urlargs and 'ns' in urlargs and 'url' in urlargs:
-                try:
-                    lurlargs['className'] = urlargs['className']
-                except KeyError:
-                    pass
-                ht+= '<td valign=top nowrap align=right><font size=-1><i>'
-                ht+= self._makeHref(req, 'QueryD', lurlargs, 'Query')
-                ht+= '&nbsp;&nbsp;&nbsp;</i></td>'
-            ht+= '<td valign=top nowrap align=right><font size=-1><i>'
-            ht+= '<a href="'+self.urls.build('Logout')
-            ht+= '">Logout &gt;&gt;</a></i>'
-            ht+= '</td></tr></table>'
-        return ht
-
-    def _printEnumDeep(self, request, curclass, dict, urlargs, level = 0):
-        classNames = dict[curclass]
-        classNames.sort()
-        ht = ''
-        for className in classNames:
-            hasKids = dict.has_key(className)
-            ht+= '<tr'
-            if self.color:
-                ht+= ' bgcolor="#EEFFEE"'
-            self._toggle_color()
-            ht+= '><td>'
-            for i in range(level-1):
-               ht+= '|&nbsp;&nbsp;&nbsp;&nbsp;'
-            if (level > 0):
-                ht+= '|---'
-            urlargs["className"] = className
-            if level==0:
-               ht+= '<b>'
-            isCimSchema = className.startswith("CIM_")
-            if not isCimSchema:
-               ht+= '<i>'
-            if not hasKids:
-                ht+= self._makeHref(request, 'GetClass', urlargs, className)
-            else:
-                ht+= self._makeHrefWithTags(request, 'GetClass', urlargs,
-                        className, '<font color="#7777ff">', '</font>')
-            if not isCimSchema:
-               ht+= '</i>'
-            if level==0:
-               ht+= '</b>'
-            ht+= '</td><td>'
-            ht+= self._makeHref(request, 'EnumInstanceNames', urlargs,
-                    'Instance Names')
-            ht+= '</td><td>&nbsp;&nbsp;&nbsp;'
-            ht+= self._makeHref(request, 'EnumInstances', urlargs, 'Instances')
-            ht+= '</td></tr>'
-            if hasKids:
-                ht += self._printEnumDeep(request, className,
-                        dict, urlargs, level+1)
-        return ht
-
-    def _printInstanceNames(self, request, urlargs, instNames,
-            omitGetLink=False):
-        if len(instNames) > 0:
-            ht = '\n<table border="1" cellpadding="2">\n'
-            if instNames[0].namespace:
-                keys = instNames[0].keys()
-                keys.sort()
-                ht+= _printInstHeading(keys, includeNS=True,
-                        omitGetLink=omitGetLink)
-            else:
-                keys = instNames[0].keys()
-                keys.sort()
-                ht+= _printInstHeading(keys, omitGetLink=omitGetLink)
-            instNames.sort()
-            for instName in instNames:
-                ht += self._printInstRow(request, urlargs, keys, instName,
-                        omitGetLink)
-            return ht + '</table>\n'
-
-    def _printInstRow(self, request, urlargs, keys, inst, omitGetLink = False):
-        lurlargs = urlargs.copy()
-        lurlargs['obj'] = inst
-        if inst.namespace is not None:
-            lurlargs['ns'] = inst.namespace
-        ht =     '  <tr>\n'
-        if not omitGetLink:
-            ht+=     '    <td>\n'
-            ht+= self._makeHref(request, 'GetInstance', lurlargs, 'get')+'\n'
-            ht+=     '    </td>\n'
-        for key in keys:
-            keyval = inst[key]
-            ht+= '    <td>\n'
-            if isinstance(keyval, pywbem.CIMInstanceName):
-                ns = keyval.namespace
-                if ns is not None:
-                    lurlargs['ns'] = ns
-                lurlargs['obj'] = keyval
-                ht+= self._makeHref(request, 'GetInstance', lurlargs,
-                        _val2str(keyval))+'\n'
-                if ns is not None:
-                    ht+= '<br><i>In namespace: ' + ns + '</i>'
-            else:
-                ht+= _val2str(keyval)+'\n'
-            ht+= '    </td>\n'
-        if inst.namespace is not None:
-            ht+= '    <td><i><font color="#00AA00">'+inst.namespace
-            ht+= '</font></i></td>\n'
-        ht+=     '  </tr>\n'
-        return ht
-
-    def _displayInstanceMod(self, request, url, ns, klass,
-            oldInstPathPair = None, getInst=False):
-        conn = self._connection
-        urlargs = {}
-        urlargs['ns'] = ns
-        urlargs['url'] = url
-        oldInstPathDec = None
-        if oldInstPathPair is not None:
-            oldInstPathDec = oldInstPathPair[1]
-        className = klass.classname
-        urlargs['className'] = className
-        oldInst = None
-        if oldInstPathDec is not None:
-            oldInst = conn.GetInstance(InstanceName=oldInstPathDec,
-                    LocalOnly = False)
-        haveRequiredProps = False
-        if getInst:
-            propNames = [p.name for p in klass.properties.values()
-                    if 'Key' in p.qualifiers]
-            propNames.sort()
-        else:
-            propNames = klass.properties.keys()
-            _sortkey(propNames, klass)
-        ht = '<table border=0><tr><td>'
-        if getInst:
-            method = 'GetInstance'
-        elif oldInst is not None:
-            method = 'ModifyInstance'
-        else:
-            method = 'CreateInstance'
-        if oldInstPathPair is None:
-            kwargs = { 'className' : className }
-        else:
-            kwargs = { 'obj' : oldInstPathDec }
-        ht+= '<form action="'+self.urls.build(method, kwargs)+'" METHOD='
-        if getInst:
-            ht+= 'GET>'
-        else:
-            ht+= 'POST>'
-        ht+= '<input type=hidden name="url" value="'+url+'">'
-        ht+= '<input type=hidden name="ns" value="'+ns+'">'
-        ht+= '<table border="1" cellpadding="2">'
-        ht+= '<tr bgcolor="CCCCCC"><th>Type</th><th>Name</th><th>Value</th>'
-        ht+= '</tr>'
-        for propName in propNames:
-            prop = klass.properties[propName]
-            propIsKey = prop.qualifiers.has_key('key')
-            propIsRequired = prop.qualifiers.has_key('required')
-            propTitle = ''
-            if prop.qualifiers.has_key('description'):
-                propTitle = prop.qualifiers['description'].value
-            ht+= '<tr'
-            if propIsKey:
-                ht+= ' bgcolor="#FFDDDD"'
-            elif propIsRequired:
-                ht+= ' bgcolor="#FFaaaa"'
-                haveRequiredProps = True
-            ht+= '>'
-            if prop.reference_class is None:
-                ht+= '<td>'+prop.type
-                if prop.is_array:
-                    ht+= ' [ ]'
-            else:
-                ht+= '<td>'+prop.reference_class + ' <i>Ref</i>'
-            ht+= ( '</td><td title="'+cgi.escape(propTitle)+'">'
-                 + self._makeHref(request, 'GetClass', urlargs, propName,
-                     '#'+propName.lower())+'</td>')
-            ht+= '<td>'
-            fPropName = 'PropName.'+prop.name
-            oldVal = None
-            if oldInst is not None:
-                if oldInst.properties.has_key(propName):
-                    oldVal = oldInst.properties[propName].value
-            if prop.qualifiers.has_key('valuemap'):
-                if type(oldVal) == list:
-                    oldVal = [str(x) for x in oldVal]
-                needComboBox = True
-                valmapQual = prop.qualifiers['valuemap'].value
-                valuesQual = None
-                if prop.qualifiers.has_key('values'):
-                    valuesQual = prop.qualifiers['values'].value
-
-                # Disable the combobox for now, because it isn't working, and
-                # we may not actually need it.  For example, perhaps any time
-                # values from VendorReserved are used, the vendor's subclass
-                # will override the method, and thus the qualifiers, and
-                # provide specific valuemap extensions that would in turn show
-                # up in our drop down.
-                #ht+= '<select name="'+fPropName+'" class="comboBox">'
-                ht+= '<select name="'+fPropName+'"'
-                if prop.is_array:
-                    ht+= ' MULTIPLE SIZE=4'
-                ht+= '>'
-                if not prop.is_array:
-                    ht+= '<option value='""'>'
-                for i in range(0, len(valmapQual)):
-                    curVal = valmapQual[i]
-                    # skip valuemap items that aren't valid values
-                    # such as the numeric ranges for DMTF Reserved and whatnot
-                    try:
-                        pywbem.tocimobj(prop.type, curVal)
-                    except:
-                        continue
-                    ht+= '<option value="'+curVal+'"'
-                    if oldVal is not None:
-                        if type(oldVal) == list:
-                            if curVal in oldVal:
-                                ht+= ' SELECTED'
-                        elif str(oldVal) == curVal:
-                            ht+= ' SELECTED'
-                    ht+= '>'+curVal
-                    if valuesQual and i < len(valuesQual):
-                        ht+= ' ('+valuesQual[i]+')'
-                ht+= '</select>'
-
-            else:
-                if oldVal is not None and propIsKey:
-                    ht+= _val2str(oldVal)
-                elif prop.type == 'boolean' and not prop.is_array:
-                    ht+= '<select name="'+fPropName+'">'
-                    ht+= '<option value='""'>'
-                    ht+= '<option value="True"'
-                    if oldVal is not None and oldVal:
-                        ht+= ' SELECTED'
-                    ht+= '>True'
-                    ht+= '<option value="False"'
-                    if oldVal is not None and not oldVal:
-                        ht+= ' SELECTED'
-                    ht+= '>False'
-                    ht+= '</select>'
-                else:
-                    ht+= '<input type=text size=50 name="'+fPropName+'"'
-                    if oldVal is not None:
-                        strValue = _val2str(oldVal)
-                        if isinstance(oldVal,list):
-                            strValue = strValue.replace('"','&quot;')
-                        ht+= ' value="'+strValue+'"'
-                    ht+= '>'
-            ht+= '</td></tr>'
-
-        ht+= '</table></td></tr>'
-        ht+= '<tr><td colspan=3><table border=0><tr><td nowrap bgcolor="#FFDDDD">'
-        ht+= '<i>Key Property</i></td>'
-        if haveRequiredProps == True:
-            ht+= '<td></td><td nowrap bgcolor="#FFaaaa">'
-            ht+= '<i>Required (non-key) Property</i></td>'
-        ht+= '<td width="100%" align="right">'
-        if getInst:
-            button = 'Get Instance'
-        else:
-            button = 'Save Instance'
-        ht+= '<input type=submit value="%s"></td></table></td></tr>' % button
-        ht+= '</form>'
-        ht+= '</table>'
-        return ht
-
-    def _displayInstance(self, request, inst, obj, klass, urlargs):
-        class_urlargs = urlargs.copy()
-        class_urlargs["className"] = klass.classname
-        ht= '<h2>Instance of '+self._makeHref(request, 'GetClass',
-                class_urlargs, klass.classname)+'</h2>'
-        ht+= '<h4>Host: <i><font color="#00AA00">' + _val2str(obj.host)
-        ht+= '</font></i>'
-        ht+= '<br>Namespace: <i><font color="#00AA00">'
-        ht+= _val2str(obj.namespace) + '</font></i></h4>'
-        ht+= '<align ="right">'
-        urlargs['obj'] = obj
-        ht+= '</align>'
-        keys = inst.keys()
-        _sortkey(keys, klass)
-        ht+= '<table border="1" cellpadding="2">'
-        ht+= '<tr>'
-        ht+= '<td>'+self._makeHref(request, 'DeleteInstance', urlargs,
-                'Delete')
-        ht+= '<br>'+self._makeHref(request, 'ModifyInstPrep', urlargs,
-                'Modify')
-        ht+= '</td>'
-        ht+= '<td align="right" colspan=2>View '
-        ht+= self._makeHref(request, 'ReferenceNames', urlargs,
-                'Objects Associated with this Instance')
-        ht+= '<br>'
-        ht+= self._makeHref(request, 'FilteredReferenceNamesDialog',
-                urlargs,'(With Filters)')
-        ht+= '</td></tr>'
-        ht+= '<tr bgcolor="CCCCCC"><th>Type</th><th>Name</th><th>Value</th>'
-        haveRequiredProps = False
-        for key in keys:
-            prop = inst.properties[key]
-            klassProp = (  klass.properties.has_key(key)
-                        and klass.properties[key] or None)
-            propIsKey = klassProp and klassProp.qualifiers.has_key('key')
-            propIsRequired = (   klassProp
-                             and klassProp.qualifiers.has_key('required'))
-            propTitle = ''
-            if klassProp and klassProp.qualifiers.has_key('description'):
-                propTitle = klassProp.qualifiers['description'].value
-            ht+= '<tr'
-            if propIsKey:
-                ht+= ' bgcolor="#FFDDDD"'
-            elif propIsRequired:
-                ht+= ' bgcolor="#FFaaaa"'
-                haveRequiredProps = True
-            ht+= '>'
-            if klassProp: 
-                if klassProp.reference_class is None:
-                    ht+= '<td>'+prop.type
-                    if prop.is_array:
-                        ht+= ' [ ]'
-                else:
-                    link_urlargs = class_urlargs.copy()
-                    link_urlargs["className"] = klassProp.reference_class
-                    ht+= '<td>'+self._makeHref(request, "GetClass",
-                            link_urlargs, klassProp.reference_class)
-                    ht+= ' <i>Ref</i>'
-            else:
-                ht+='<td><font color="red">PropNotInSchema</font>'
-            ht+= '</td><td title="'+cgi.escape(propTitle)+'">'
-            ht+= self._makeHref(request, 'GetClass', class_urlargs, key,
-                    '#'+key.lower())+'</td><td>'
-
-
-            if (   klassProp and klassProp.qualifiers.has_key('values')
-               and klassProp.qualifiers.has_key('valuemap')):
-                ht+= _displayMappedValue(prop.value, klassProp.qualifiers)
-            elif klassProp and klassProp.reference_class is not None:
-                ns = _val2str(inst[key].namespace)
-                urlargs['ns'] = ns
-                targetInstName = inst[key]
-                urlargs['obj'] = targetInstName
-                targetObjectPath = _val2str(targetInstName)
-                ht+= self._makeHref(request, 'GetInstance', urlargs,
-                        targetObjectPath)
-            else:
-                propval = _val2str(prop.value)
-                if key.lower().endswith("classname"):
-                    link_urlargs = class_urlargs.copy()
-                    link_urlargs["className"] = propval
-                    ht+= self._makeHref(request, "GetClass", link_urlargs,
-                            propval)
-                else:
-                    ht+= propval
-            ht+= '</td></tr>'
-        ht+= '<tr><td colspan=3>'
-        ht+= '<table border=0><tr><td nowrap bgcolor="#FFDDDD">'
-        ht+= '<i>Key Property</i></td>'
-        if haveRequiredProps == True:
-            ht+= '<td></td><td nowrap bgcolor="#FFaaaa">'
-            ht+= '<i>Required (non-key) Property</i></td>'
-        ht+= '<td width="100%" align="right"></table></td></tr>'
-        if klass.methods:
-            ht+= '<tr><td colspan=3>'
-            ht+= '<table>'
-            ht+= '<tr><td>'
-            ht+= '<font size=+1><center><b>Methods</b></center></font>'
-            ht+= '</td></tr>'
-            for method in klass.methods.values():
-                ht+= '<tr>'
-                ht+= ' <td>'
-                methUrlArgs = urlargs.copy()
-                methUrlArgs['obj'] = methUrlArgs['obj']
-                methUrlArgs['method'] = method.name
-                ht+= self._makeHref(request, 'PrepMethod', methUrlArgs,
-                        method.name) + '('
-                for param in method.parameters.keys():
-                    if param != method.parameters.keys()[0]:
-                        ht+= ','
-                    ht+= param
-                ht+=')'
-                ht+= ' </td>'
-                ht+= '</tr>'
-            ht+= '</table>'
-            ht+= '</td></tr>'
-        purlargs = {'obj': obj}
-        ht+= '<tr><td colspan=3>'
-        ht+= 'Get the '+self._makeHref(request, 'Pickle',
-                purlargs, 'LocalInstancePath')
-        ht+= ' for use as a Method Reference Parameter'
-        ht+= '</td></tr>'
-        ht+= '</table>'
-        return ht
-
-    def _createOrModifyInstance(self, request, url, ns, className, obj,
-            **params):
-        conn = self._connection
-        klass =  conn.GetClass(ClassName=className, 
+    def _createOrModifyInstance(self, className, path, **params):
+        conn = self.conn
+        klass = conn.GetClass(ClassName=className,
                 LocalOnly=False, IncludeQualifiers=True)
-        if obj is not None:
-            inst = conn.GetInstance(InstanceName=obj, LocalOnly = False)
+        if path is not None:
+            inst = conn.GetInstance(InstanceName=path, LocalOnly = False)
         else:
             inst = pywbem.CIMInstance(className)
-        inst.path = pywbem.CIMInstanceName(className, namespace=ns)
-        # Remove 'PropName.' prefix from param names.
-        params = dict ([(x[9:],y) for (x, y) in params.items()])
-        for propName, propVal in params.items():
-            metaProp = klass.properties[propName]
-            if metaProp.reference_class is not None:
-                dt = metaProp.reference_class
-            else:
-                dt = metaProp.type
-            if not propVal:
-                inst.update_existing([(propName,None)])
-            else:
-                if metaProp.reference_class is not None:
-                    inst.properties[propName] = _decodeObject(propVal)
-                else:
-                    if metaProp.is_array:
-                        if type(propVal) is not list:
-                            propVal = propVal.strip()
-                            propVal = propVal.strip('{}[]')
-                            propVal = propVal.strip()
-                            if len(propVal) > 2 and dt == 'string' \
-                               and propVal[0] == '"' and propVal[-1] == '"' :
-                                propVal = '['+propVal+']'
-                                propVal = eval(propVal)
-                            else:
-                                propVal = propVal.split(",")
-                                propVal = [x.strip() for x in propVal]
-                        propVal = [pywbem.tocimobj(dt, x) for x in propVal]
-                        inst.properties[propName] = propVal
-                    else:
-                        inst.properties[propName] = pywbem.tocimobj(
-                                dt, propVal)
-        if obj:
-            if obj.namespace is None: 
-                obj.namespace = ns
-            inst.path = obj
-            conn.ModifyInstance(ModifiedInstance=inst)
-        else: 
-            obj =  conn.CreateInstance(NewInstance=inst)
-        inst = conn.GetInstance(InstanceName=obj, LocalOnly = False)
-        
-        urlargs = { 'ns' : ns, 'url' : url, 'obj' : obj }
-        refurl = self.urls.build('GetInstance', urlargs)
-        ht = '<HTML>'
-        ht+= '<META HTTP-EQUIV="Refresh" CONTENT="1;URL='+refurl+'">'
-        ht+= '<HEAD><TITLE>Saving Instance...</TITLE> </HEAD>'
-        ht+= '<BODY>The Instance has been saved.  Refreshing...<br>'
-        ht+= '<p>If your browser doesn&apos;t refresh to the new instance, '
-        ht+= 'click '+self._makeHref(request, 'GetInstance', urlargs, 'here.')
-        return ht
+            inst.path = pywbem.CIMInstanceName(
+                    className, namespace=self._local.ns)
 
-    def on_index(self, request):
-        ht = self._printHead('Login')
-        ht+= '<h1><font color=red><b>Y</b></font>et '
-        ht+= '<font color=red><b>A</b></font>nother '
-        ht+= '<font color=red><b>W</b></font>BEM '
-        ht+= '<font color=red><b>N</b></font>avigator (YAWN)</h1>'
-        ht+= '<h3><i>&quot;All CIM Browsers suck. &nbsp;This one sucks less&quot;</i></h3>'
-        ht+= '<hr>'
-        ht+= '<FORM ACTION="'+self.urls.build('Login')+'" METHOD=POST>'
-        ht+= '<table border=0>'
-        ht+= '<tr><td>URI Scheme: </td>'
-        ht+= '  <td><select name="scheme">'
-        ht+= '  <option value="https">https'
-        ht+= '  <option value="http">http'
-        ht+= '</select></td></tr>'
-        ht+= '<tr><td>Host: </td><td><INPUT TYPE=TEXT NAME="host" size="50"></td></tr>'
-        ht+= '<tr><td>Port: </td><td><INPUT TYPE=TEXT NAME="port" VALUE="5989"></td></tr>'
-        #ht+= '<tr><td>User: </td><td><INPUT TYPE=TEXT NAME="user" size="50"></td></tr>'
-        #ht+= '<tr><td>Password: </td><td><INPUT TYPE=TEXT NAME="password" size="50"</td></tr>'
-        ht+= '<tr><td>Namespace: </td><td><INPUT TYPE=TEXT NAME="ns"></td></tr>'
-        ht+= '<tr><td></td><td><INPUT TYPE=SUBMIT VALUE="Login"></td></tr>'
-        ht+= '</table>'
-        ht+= '</FORM>'
-        ht+= '<hr><center>Powered by<br><img src="http://www.modpython.org/mod_python.gif"></center>'
-        ht+= '</body></html>'
-        return Response(ht, mimetype="text/html")
+        for p in get_class_props(klass, inst=inst):
+            if p['is_key']: continue # do not allow key modification
+            value = formvalue2cimobject(p, 'PropName.', params)
+            if (  value is None
+               or (isinstance(value, list) and len(value) == 0)):
+                inst.update_existing([(p['name'], None)])
+            else:
+                inst.properties[p['name']] = value
+        if path:
+            if path.namespace is None:
+                path.namespace = self._local.ns
+            inst.path = path
+            conn.ModifyInstance(ModifiedInstance=inst)
+        else:
+            path = conn.CreateInstance(NewInstance=inst)
+        inst = self.conn.GetInstance(InstanceName=path, LocalOnly = False)
+
+        return self.render('modify_instance.mako',
+                className = className,
+                instance = get_inst_info(inst, klass))
+
+    def _enumInstrumentedClassNames(self):
+        fetched_classes = []
+        def get_class(cname):
+            fetched_classes.append(cname)
+            return conn.GetClass(ClassName=cname,
+                       LocalOnly=True, PropertyList=[],
+                       IncludeQualifiers=False, IncludeClassOrigin=False)
+        conn = self.conn
+        caps = conn.EnumerateInstances(
+                        ClassName='PG_ProviderCapabilities',
+                        namespace='root/PG_InterOp',
+                        PropertyList=['Namespaces', 'ClassName'])
+        start_class = '.'
+        deepDict = {start_class:[]}
+        for cap in caps:
+            if self._local.ns not in cap['Namespaces']:
+                continue
+            if cap['ClassName'] in fetched_classes:
+                continue
+            klass = get_class(cap['ClassName'])
+            if klass.superclass is None:
+                deepDict[start_class].append(klass.classname)
+            else:
+                try:
+                    deepDict[klass.superclass].append(klass.classname)
+                except KeyError:
+                    deepDict[klass.superclass] = [klass.classname]
+                while klass.superclass is not None:
+                    if klass.superclass in fetched_classes:
+                        break
+                    klass = get_class(klass.superclass)
+                    if klass.superclass is None and \
+                            klass.superclass not in deepDict[start_class]:
+                        deepDict[start_class].append(klass.classname)
+                    elif klass.superclass in deepDict:
+                        if klass.classname not in deepDict[klass.superclass]:
+                            deepDict[klass.superclass].append(klass.classname)
+                        break
+                    else:
+                        deepDict[klass.superclass] = [klass.classname]
+
+        return self.render('enum_instrumented_class_names.mako',
+                mode      = 'deep',
+                className = start_class,
+                classes   = deepDict)
+
+    def on_index(self):
+        resp = self.response
+        resp.data = self.render('index.mako')
+        return resp
 
     @view()
-    def on_AssociatedClasses(self, request, className, url=None, ns=None):
-        conn = self._frontMatter(request, url, ns)
+    def on_AssociatedClasses(self, className):
+        conn = self.conn
         classNames = None
         cns = conn.References(ObjectName=className, IncludeQualifiers=True)
         cns.sort()
-        urlargs = {}
-        urlargs['ns'] = ns
-        urlargs['url'] = url
-
-        urlargs['className'] = className
-        ht = _printHead( 'Classes Associated To ' + className
-                       + ' in Namespace: '+ns)
-        ht+= '<h1>Classes Associated To '
-        ht+= self._makeHref(request, 'GetClass', urlargs, className)
-        ht+= ' in Namespace: '+ns+'</h1>'
-        ht+= '<table border=1 cellpadding=2><tr bgcolor="CCCCCC">'
-        ht+= '<th>Associated Class Name</th><th>Via Association Class</th>'
-        ht+= '<th>Role</th><th>Associated Role</th></tr>'
-
-        #ht+= '<tr><td colspan=4>'
-        #ht+= '<br><br><b>Properties</b>'
-        #ht+= '<br>' + `cns[0][1].properties`
-        #ht+= '<br><br><b>Superclass</b>'+ cns[0][1].superclass
-        #ht+= '<br><br><b>Property Names</b>'+`cns[0][1].properties.keys()`
-        #ht+= '<br><br><b>Qualifiers</b>'+`cns[0][1].qualifiers`
-        #ht+= '<br><br><b>Description of Antecedent</b>'+`cns[0][1].properties['Antecedent'].qualifiers['Description'].value`
-        #if 'Description' in cns[0][1].properties['Antecedent'].qualifiers.keys():
-        #    ht+= '<br><br><b>Description of Antecedent</b>'+`cns[0][1].properties['Antecedent'].qualifiers['Description'].value`
-        #ht+= '<br><br><b>Qualifiers of Dependent</b>'+`cns[0][1].properties['Dependent'].qualifiers`
-        #ht+= '<br><br><b>Value of Antecedent</b>'+`cns[0][1].properties['Antecedent']`
-        #ht+= '<br><br><b>Value of Antecedent</b>'+`cns[0][1].properties['Dependent']`
-        #ht+= '<br><br><b>Methods</b>'+`cns[0][1].methods`
-        #ht+= '</td></tr>'
-
 
         hierarchy = []
         hierarchy = getAllHierarchy(conn, url, ns, className)
         lastAssocClass = ''
+        associations = []
         for cn in cns:
             klass = cn[1]
             assocClass = klass.classname
@@ -1417,7 +1002,6 @@ class Yawn(object):
 
             # to find the resultClass, I have to iterate the properties
             # to a REF that is not className
-
             for propname in klass.properties.keys():
                 prop = klass.properties[propname]
                 if prop.reference_class is not None:
@@ -1448,37 +1032,23 @@ class Yawn(object):
                             resultClass = refClass
                             resultRole = propname
                             resultRoleDescription = description
-
-            ht+= '<tr><td>'
-            urlargs['className'] = resultClass
-            ht+= self._makeHref(request, 'GetClass', urlargs, resultClass)
-            ht+= '</td>'
-            ht+= '<td>'
-            urlargs['className'] = assocClass
-            ht+= self._makeHref(request, 'GetClass', urlargs, assocClass)
-            ht+= '</td>'
-            ht+= '<td title="'+roleDescription+'">'
-            ht+= role
-            ht+= '</td>'
-            ht+= '<td title="'+resultRoleDescription+'">'
-            ht+= resultRole
-            ht+= '</td>'
-            ht+= '</tr>'
-
+            associations.append(
+                    ( resultClass
+                    , assocClass
+                    , role
+                    , roleDescription
+                    , resultRole
+                    , resultRoleDescription
+                    ))
             lastAssocClass = assocClass
-        ht+= '</table>'
-        return ht + "</table></body></html>"
+
+        return self.render('associated_classes.mako',
+                className = className,
+                associations = associations)
 
     @view()
-    def on_AssociatorNames(self, request, obj, url=None, ns=None):
-        conn = self._frontMatter(request, url, ns)
-        urlargs = {}
-        urlargs['ns'] = ns
-        urlargs['url'] = url
-        instName = _decodeObject(instPath)
-        assocs = conn.AssociatorNames(ObjectName=instName)
-        ht = self._printHead('AssociatorNames '+instName.classname,
-                urlargs=urlargs)
+    def on_AssociatorNames(self, path):
+        assocs = self.conn.AssociatorNames(ObjectName=path)
         groupedAssocs = {}
         for assoc in assocs:
             if assoc.classname not in groupedAssocs.keys():
@@ -1487,107 +1057,76 @@ class Yawn(object):
                 groupedAssocs[assoc.classname].append(assoc)
         setkeys = groupedAssocs.keys()
         setkeys.sort()
+        instances = []
         for setkey in setkeys:
-            ht+= '<h2>'+setkey+'</h2>'
-            assocList = groupedAssocs[setkey]
-            ht+= self._printInstanceNames(request, urlargs, assocList)
-        return ht + '</body></html>'
+            insts = groupedAssocs[setkey]
+            if len(insts) < 1: continue
+            infos = []
+            for iname in insts:
+                infos.append(get_inst_info(iname))
+            instances.append((inst.classname, inst.namespace, infos))
+        return self.render('associator_names.mako',
+                className = path.classname,
+                instances = instances)
 
     @view()
-    def on_CMPIProvider(self, request, className, url=None, ns=None):
-        conn = self._frontMatter(request, url, ns)
-        klass = conn.GetClass(ClassName = className, LocalOnly=False, 
+    def on_CMPIProvider(self, className):
+        klass = self.conn.GetClass(ClassName = className, LocalOnly=False,
                     IncludeClassOrigin=True, IncludeQualifiers=True)
-        code = cmpi_codegen(klass)
-        title = 'CMPI Provider for %s' % className
-        ht = self._printHead(title, request)
-        ht+= '<font size=+1><b>%s</b></font>' % title
-        ht+= '<table bgcolor="#f9f9f9" cellspacing=0 cellpadding=10 border=1>'
-        ht+= '<tr><td><pre>'+cgi.escape(code)+'</pre>'
-        ht+= '</td></tr></table>'
-        #ht+= '<font size=+1><b>Provider Registration MOF</b></font>'
-        #ht+= '<table bgcolor="#f9f9f9" cellspacing=0 cellpadding=10 border=1>'
-        #ht+= '<tr><td><pre>'+cgi.escape(mof)+'</pre>'
-        #ht+= '</td></tr></table>'
-        return ht + '</body></html>'
+        return self.render('cmpi_provider.mako', className=className)
 
     @view(http_method=POST)
-    def on_CreateInstance(self, request, className, url=None, ns=None,
-            **params):
-        conn = self._frontMatter(request, url, ns)
-        ht = self._createOrModifyInstance(request,  url, ns, className,
-                None, **params)
-        return ht + '</body></html>'
+    def on_CreateInstance(self, className, **params):
+        return self._createOrModifyInstance(className, None, **params)
 
     @view()
-    def on_CreateInstancePrep(self, request, className, url=None, ns=None):
-        conn = self._frontMatter(request, url, ns)
-        klass = conn.GetClass(ClassName=className, 
+    def on_CreateInstancePrep(self, className):
+        klass = self.conn.GetClass(ClassName=className,
                 LocalOnly=False, IncludeQualifiers=True)
-        ht = self._printHead('Create Instance of '+className,
-                'Create Instance of '+className, request,
-                urlargs={'ns':ns, 'url':url})
-        ht+= self._displayInstanceMod(request, url, ns, klass)
-        return ht + '</body></html>'
+        items = sorted([ get_class_item_details(className, prop)
+            for prop in klass.properties.values()], _cmp_params(klass))
+        return self.render('modify_instance_prep.mako',
+                new       = True,
+                className = className,
+                items     = items)
 
     @view()
-    def on_DeleteClass(self, request, className, url=None, ns=None):
-        conn = self._frontMatter(request, url, ns)
-        urlargs = {}
-        urlargs['ns'] = ns
-        urlargs['url'] = url
-        conn.DeleteClass(ClassName = className)
-        ht = self._printHead('Deleted class '+ className, urlargs=urlargs)
-        ht+= 'Deleted Class ' + className
-        return ht + '</body></html>'
+    def on_DeleteClass(self, className):
+        self.conn.DeleteClass(ClassName = className)
+        return self.render('delete_class.mako',
+                className  = className)
 
     @view()
-    def on_DeleteInstance(self, request, obj, url=None, ns=None):
-        conn = self._frontMatter(request, url, ns)
-        try:
-            conn.DeleteInstance(obj)
-        # TODO make this use _ex()
-        except pywbem.CIMError, arg:
-            ht = self._printHead('Error Deleting instance of '+
-                    obj.classname)
-            ht+= 'Deleting instance of '+obj.classname
-            ht+= ' returned the following error:<br> <i>('
-            ht+= `arg[0]` + ') : ' + arg[1] + '</i>'
-            ht+= '</body></html>'
-            return ht
-        urlargs = {'ns':ns,'url':url,'className':obj.classname}
-        ht = self._printHead('Deleted Instance of '+obj.classname, urlargs=urlargs)
-        ht+= r'Deleted Instance of '
-        ht+= self._makeHref(request, 'GetClass', urlargs,
-                obj.classname)
-        ht+= self._printInstanceNames(request, urlargs, [obj],
-                omitGetLink=True)
-        return ht + '</body></html>'
+    def on_DeleteInstance(self, path):
+        self.conn.DeleteInstance(path)
+        return self.render('delete_instance.mako',
+                path = path,
+                keys = sorted(sorted(path.keys())))
 
     @view()
-    def on_EnumClassNames(self, request, className=None, mode=None,
-            instOnly=None, url=None, ns=None):
-        conn = self._frontMatter(request, url, ns)
+    def on_EnumClassNames(self, className=None, mode=None, instOnly=None):
+        conn = self.conn
+        req = self._local.request
         if mode is None:
-            mode = request.args.get('mode', 'deep')
+            mode = req.args.get('mode', 'deep')
         if className is None:
-            className = request.args.get('className', None)
+            className = req.args.get('className', None)
         if instOnly is None:
-            instOnly = request.args.get('instOnly', None)
+            instOnly = req.args.get('instOnly', None)
             if instOnly is not None:
                 instOnly = instOnly.lower() in ('true', 'yes', '1')
         if instOnly is not None:
             self.response.set_cookie('yawn_instOnly', str(instOnly).lower(),
-                    path=_baseScript(request))
-        elif (  'yawn_instOnly' in request.cookies
-             and request.cookies['yawn_instOnly'] == 'true'):
+                    path=_base_script(req))
+        elif (  'yawn_instOnly' in req.cookies
+             and req.cookies['yawn_instOnly'] == 'true'):
             instOnly = True
 
         if instOnly:
-            return self.on_EnumInstrumentedClassNames(request, url, ns)
+            return self._enumInstrumentedClassNames()
 
         lineage = []
-        if className is not None: 
+        if className is not None:
             lineage = [className]
             klass = conn.GetClass(ClassName=className)
             while klass.superclass is not None:
@@ -1601,123 +1140,35 @@ class Yawn(object):
             kwargs['LocalOnly'] = True
             kwargs['IncludeQualifiers'] = False
             kwargs['IncludeClassOrigin'] = False
-            klasses = conn.EnumerateClasses(**kwargs)
-        else:
-            classNames = conn.EnumerateClassNames(**kwargs)
+        klasses = conn.EnumerateClasses(**kwargs)
 
-        urlargs = {'ns': ns, 'url': url}
-        ht = self._printHead('Classes in '+ns,'Classes in '+url+'/'+ns,
-                request, urlargs)
-        ecn_urlargs = urlargs.copy()
-        ecn_urlargs['mode'] = mode
-        ht+= '<table border=0><tr><td></td>'
-        if lineage: 
-            ht+= '<td>'+self._makeHref(request, 'EnumClassNames',
-                    ecn_urlargs, '<root>')
-            for cname in lineage: 
-                ht+= '&nbsp;/&nbsp;'
-                if cname != lineage[-1]:
-                    ecn_urlargs['className'] = cname
-                    ht+= self._makeHref(request, 'EnumClassNames',
-                            ecn_urlargs, cname)
-                else:
-                    ht+= cname
-            ht+= '</td>'
-        ref_urlargs = urlargs.copy()
-        if className is not None: 
-            ref_urlargs['className'] = className
-        ht+= '<td width="100%" align="right">'
-        ht+= '<table border=0><tr>'
-        ht+= '<td align=center colspan=2>Reload listing:</td>'
-        #if len(lineage) > 5:
-        #    ht+= '</tr><tr>'
-        #ht+= '<table border=1><tr>'
-        if mode != 'deep':
-            ref_urlargs['mode'] = 'deep'
-            ht+= '<td>'
-            ht+= self._makeHref(request, 'EnumClassNames', ref_urlargs, 
-                           'Deep') #  (With Hierarchy)')
-            ht+= '</td>'
-        if mode != 'shallow':
-            ref_urlargs['mode'] = 'shallow'
-            ht+= '<td>'
-            ht+= self._makeHref(request, 'EnumClassNames', ref_urlargs,
-                    'Shallow')
-            ht+= '</td>'
-        if False: # mode != 'flat': # Disable since deep is faster now
-            ref_urlargs['mode'] = 'flat'
-            ht+= '<td>'
-            ht+= self._makeHref(request, 'EnumClassNames', ref_urlargs, 
-                           'Deep (Without Hierarchy)')
-            ht+= '</td>'
-        #ht+= '</tr></table>'
-        ht+= '</tr></table></td></tr></table>'
-
-        ht+= '<hr>\n'
-        ht+= '<table border=0>'
-        if mode == 'deep':
-            startClass = className is None and 'None' or className
-            deepDict = {startClass:[]}
-            for klass in klasses:
+        start_class = className is None and 'None' or className
+        classes = {start_class:[]}
+        for klass in klasses:
+            if mode == 'deep':
                 if klass.superclass is None:
-                    deepDict[startClass].append(klass.classname)
+                    bisect.insort(classes[start_class], klass.classname)
                 else:
-                    try:
-                        deepDict[klass.superclass].append(klass.classname)
-                    except KeyError:
-                        deepDict[klass.superclass] = [klass.classname]
+                    if not klass.superclass in classes:
+                        classes[klass.superclass] = [klass.classname]
+                    else:
+                        bisect.insort(classes[klass.superclass],
+                                klass.classname)
+            else:
+                bisect.insort(classes[start_class], klass.classname)
+                if mode != 'flat' and conn.EnumerateClassNames(
+                        ClassName=klass.classname):
+                    classes[klass.classname] = [True] # has kids
 
-            ht += self._printEnumDeep(request, startClass, deepDict, urlargs,
-                    len(lineage))
-
-        else:
-            #ht+= '<table border=0>'
-            if classNames is None:
-                classNames = []
-            for cname in classNames:
-                isCimSchema = cname.startswith("CIM_")
-                ecn_urlargs['className'] = cname
-                ht+= '<tr'
-                if self.color:
-                    ht+= ' bgcolor="#EEFFEE"'
-                self._toggle_color()
-                ht+= '><td>'
-                hasKids = (   mode != 'flat'
-                          and conn.EnumerateClassNames(ClassName=cname))
-                if hasKids:
-                    ht+= self._makeHref(request, 'EnumClassNames',
-                            ecn_urlargs, '+')
-                ht+= '</td><td>'
-                urlargs['className'] = cname
-                if not isCimSchema:
-                    ht+= '<i>'
-                if not hasKids:
-                    ht+= self._makeHrefWithTags(request, 'GetClass',
-                            urlargs, cname,
-                                   '<font color="#05058f">','</font>')
-                else:
-                    ht+= self._makeHref(request, 'GetClass', urlargs, cname)
-                if not isCimSchema:
-                    ht+= '</i>'
-                ht+= '</td><td>&nbsp;&nbsp;&nbsp;'
-                ht+= self._makeHref(request, 'EnumInstanceNames', urlargs,
-                        'Instance Names')
-                ht+= '</td><td>&nbsp;&nbsp;&nbsp;'
-                ht+= self._makeHref(request, 'EnumInstances',
-                        urlargs, 'Instances')
-                ht+= '</td></tr>\n'
-            ht += '</table>'
-
-        return ht + '</table></body></html>'
+        return self.render('enum_class_names.mako',
+                className  = className,
+                lineage    = lineage,
+                mode       = mode,
+                classes    = classes)
 
     @view()
-    def on_EnumInstanceNames(self, request, className, url=None, ns=None):
-        conn = self._frontMatter(request, url, ns)
-        urlargs = {}
-        urlargs['ns'] = ns
-        urlargs['url'] = url
-        instNames = conn.EnumerateInstanceNames(ClassName = className)
-        numInsts = len(instNames)
+    def on_EnumInstanceNames(self, className):
+        instNames = self.conn.EnumerateInstanceNames(ClassName = className)
         inameDict = pywbem.NocaseDict()
         for iname in instNames:
             if iname.classname not in inameDict:
@@ -1725,170 +1176,78 @@ class Yawn(object):
             else:
                 inameDict[iname.classname].append(iname)
 
-        ht = '%s %s' %(numInsts, numInsts == 1 and 'Instance' or 'Instances')
+        instances = []
+        for cname, inames in sorted(inameDict.items(), key=lambda k: k[0]):
+            infos = []
+            for iname in inames:
+                infos.append(get_inst_info(iname))
+            instances.append((cname, iname.namespace, infos))
 
-        class_urlargs = urlargs.copy()
-        class_urlargs["className"] = className
-        ht+= ' of '
-        ht+= self._makeHref(request, 'GetClass',
-                class_urlargs, className) + '</h1>'
-        ht = self._printHead('Instances of '+className,
-                ht, request, urlargs=urlargs)
-        if numInsts == 0:
-            ht += self._makeHref(request, 'CreateInstancePrep', class_urlargs, 
-                'Create New Instance')
-
-        for cname, inames in inameDict.items():
-            if len(inameDict) > 1:
-                ht+= '<h2>'
-                ht+= '%s %s'%( len(inames)
-                             , len(inames) == 1 and 'Instance' or 'Instances')
-                class_urlargs["className"] = cname
-                ht+= ' of '
-                ht+= self._makeHref(request, 'GetClass',
-                        class_urlargs, cname) + '</h2>'
-            ht += self._printInstanceNames(request, urlargs, inames)
-            ht += '<p>'
-            ht+= self._makeHref(request, 'CreateInstancePrep', class_urlargs, 
-                'Create New Instance')
-        return ht + '</body></html>'
+        return self.render('enum_instance_names.mako',
+            className  = className,
+            instances  = instances)
 
     @view()
-    def on_EnumInstrumentedClassNames(self, request, url=None, ns=None):
-        fetched_classes = []
-        def get_class(cname):
-            fetched_classes.append(cname)
-            return conn.GetClass(ClassName=cname,
-                       LocalOnly=True, PropertyList=[],
-                       IncludeQualifiers=False, IncludeClassOrigin=False)
-        conn = self._frontMatter(request, url, ns)
-        caps = conn.EnumerateInstances(
-                        ClassName='PG_ProviderCapabilities', 
-                        namespace='root/PG_InterOp',
-                        PropertyList=['Namespaces', 'ClassName'])
-        startClass = '.'
-        deepDict = {startClass:[]}
-        for cap in caps:
-            if ns not in cap['Namespaces']: 
-                continue
-            if cap['ClassName'] in fetched_classes:
-                continue
-            klass = get_class(cap['ClassName'])
-            if klass.superclass is None:
-                deepDict[startClass].append(klass.classname)
-            else:
-                try:
-                    deepDict[klass.superclass].append(klass.classname)
-                except KeyError:
-                    deepDict[klass.superclass] = [klass.classname]
-                while klass.superclass is not None:
-                    if klass.superclass in fetched_classes:
-                        break
-                    klass = get_class(klass.superclass)
-                    if klass.superclass is None and \
-                            klass.superclass not in deepDict[startClass]:
-                        deepDict[startClass].append(klass.classname)
-                    elif klass.superclass in deepDict:
-                        if klass.classname not in deepDict[klass.superclass]:
-                            deepDict[klass.superclass].append(klass.classname)
-                        break 
-                    else:
-                        deepDict[klass.superclass] = [klass.classname]
-                                
-
-        urlargs = {'ns': ns, 'url': url}
-        ht = self._printHead('Classes in '+ns,'Classes in '+url+'/'+ns,
-                req, urlargs)
-        ht+= '<table border=0><tr><td></td>'
-        ht+= self._printEnumDeep(request, startClass, deepDict, urlargs)
-        return ht + '</table></body></html>'
-
-    @view()
-    def on_EnumInstances(self, request, className, url=None, ns=None):
-        conn = self._frontMatter(request, url, ns)
-        urlargs = {}
-        urlargs['ns'] = ns
-        urlargs['url'] = url
-        insts = conn.EnumerateInstances(ClassName = className,
+    def on_EnumInstances(self, className):
+        conn = self.conn
+        insts = conn.EnumerateInstances(
+                ClassName = className,
                 LocalOnly = False)
-        ht = self._printHead('Instances of '+className,
-                'Instances of '+className, request, urlargs=urlargs)
-        numInsts = len(insts)
-        msgStart = 'Showing '+`numInsts`+' Instances<br />'
-        if numInsts == 0:
-            msgStart = 'No Instances<br />'
-        elif numInsts == 1:
-            msgStart = ''
-        ht+= msgStart
 
         ccache = pywbem.NocaseDict()
+        instances = []
         for inst in insts:
-            instName = inst.path
+            i = {}
             try:
-                klass = ccache[instName.classname]
+                klass = ccache[inst.path.classname]
             except KeyError:
-                klass = conn.GetClass(instName.classname, LocalOnly=False)
-                ccache[instName.classname] = klass
-            ht += self._displayInstance(request, inst, instName,
-                    klass, urlargs.copy())
-        return ht + '</body></html>'
+                klass = conn.GetClass(inst.path.classname, LocalOnly=False)
+                ccache[inst.path.classname] = klass
+            i = get_inst_info(inst, klass)
+            instances.append(i)
+
+        return self.render('enum_instances.mako',
+                className = className,
+                instances = instances)
 
     @view(require_ns=False)
-    def on_EnumNamespaces(self, request, url=None):
-        conn = self._frontMatter(request, url, '')
+    def on_EnumNamespaces(self):
+        conn = self.conn
         nsinsts = []
-        try:
-            for nsclass in ['CIM_Namespace', '__Namespace']:
-                for interopns in ['root/cimv2', 'Interop', 'interop', 'root',
-                        'root/interop']:
-                    try:
-                        nsinsts = conn.EnumerateInstanceNames(nsclass,
-                                namespace = interopns)
-                    except pywbem.CIMError, arg:
-                        if arg[0] in [pywbem.CIM_ERR_INVALID_NAMESPACE,
-                                      pywbem.CIM_ERR_NOT_SUPPORTED,
-                                      pywbem.CIM_ERR_INVALID_CLASS]:
-                            continue
-                        else:
-                            raise
-                    if len(nsinsts) == 0:
+        for nsclass in ['CIM_Namespace', '__Namespace']:
+            for interopns in ['root/cimv2', 'Interop', 'interop', 'root',
+                    'root/interop']:
+                try:
+                    nsinsts = conn.EnumerateInstanceNames(nsclass,
+                            namespace = interopns)
+                except pywbem.CIMError, arg:
+                    if arg[0] in [pywbem.CIM_ERR_INVALID_NAMESPACE,
+                                  pywbem.CIM_ERR_NOT_SUPPORTED,
+                                  pywbem.CIM_ERR_INVALID_CLASS]:
                         continue
-                    break
+                    else:
+                        raise
                 if len(nsinsts) == 0:
                     continue
                 break
-        except pywbem.CIMError, arg:
-            ht = self._printHead('Error')
-            details = _code2string(arg[0])
-            ht+= '<i>'+details[0]+': '+details[1]
-            ht+=': '+cgi.escape(arg[1])+'</i>'
-            return ht + '</body></html>'
+            if len(nsinsts) == 0:
+                continue
+            break
 
-        ht = self._printHead('Namespaces','CIM Namespaces in '+url, request)
         if len(nsinsts) == 0:
-            ht+= '<h1>Error</h1>'
-            ht+= 'Unable to enumerate Namespaces.  Return to the '
-            ht+= '<a href="'+_baseScript(request)
-            ht+= '">Login page</a> and specify a '
-            ht+= 'Namespace.'
-            if conn.last_reply is not None:
-                ht+= '<pre>'+cgi.escape(conn.last_reply)+'</pre>'
-            return ht + '</body></html>'
-        urlargs = {}
-        urlargs['url'] = url
+            return self.render("enum_namespaces.mako", namespaces = [])
         nslist = [inst['Name'].strip('/') for inst in nsinsts]
         if interopns not in nslist:
         # Pegasus didn't get the memo that namespaces aren't hierarchical
-        # This will fall apart if there exists a namespace 
+        # This will fall apart if there exists a namespace
         # <interopns>/<interopns>
-        # Maybe we should check the Server: HTTP header instead. 
+        # Maybe we should check the Server: HTTP header instead.
             nslist = [interopns+'/'+subns for subns in nslist]
             nslist.append(interopns)
         nslist.sort()
-        nsd = None
         if 'root/PG_InterOp' in nslist:
             nsd = dict([(x, 0) for x in nslist])
-            caps = conn.EnumerateInstances('PG_ProviderCapabilities', 
+            caps = conn.EnumerateInstances('PG_ProviderCapabilities',
                     namespace='root/PG_InterOp',
                     PropertyList=['Namespaces'])
             for cap in caps:
@@ -1897,528 +1256,186 @@ class Yawn(object):
                         nsd[_ns] += 1
                     except KeyError:
                         pass
-        ht+= '<table border=0>'
-        for nsname in nslist:
-            urlargs['ns'] = nsname
-            urlargs['instOnly'] = 'false'
-            ht+= '<tr><td>'+self._makeHref(request, 'EnumClassNames', urlargs,
-                    nsname)
-            ht+= '</td><td>&nbsp;&nbsp;'
-            if nsd and nsd[nsname] > 0:
-                urlargs['instOnly'] = 'true'
-                ht+= self._makeHref(request, 'EnumClassNames', urlargs, 
-                               '%s Instrumented Classes' % nsd[nsname])
-            ht+= '</td></tr>' 
-        ht+= '</table>'
-        return ht + '</body></html>'
-
-    @view()
-    def on_FilteredReferenceNames(self, request, instPath, assocClass,
-            resultClass, role, resultRole, assocCall, properties,
-            url=None, ns=None):
-        conn = self._frontMatter(request, url, ns)
-        urlargs = {}
-        urlargs['ns'] = ns
-        urlargs['url'] = url
-        instName = _decodeObject(instPath)
-        refs = None
-        ht = self._printHead(assocCall+' '+instName.classname,
-                urlargs=urlargs)
-
-        class_urlargs = urlargs.copy()
-        class_urlargs["className"] = instName.classname
-        ht+= '<h1>Filtered Objects associated with instance of '
-        ht+= self._makeHref(request, 'GetClass', class_urlargs,
-                instName.classname) +'</h1>'
-        if assocCall=='Associators':
-            ht+='<b>Associators ( AssocClass=' + assocClass + ', ResultClass='
-            ht+= resultClass + ', Role=' + role + ', ResultRole=' + resultRole
-            ht+= ', Properties=' + properties + ' )</b><br><br>'
-        elif  assocCall=='Associator Names':
-            ht+='<b>AssociatorNames ( AssocClass=' + assocClass
-            ht+= ', ResultClass=' + resultClass + ', Role=' + role
-            ht+= ', ResultRole=' + resultRole + ', Properties=' + properties
-            ht+= ' )</b><br><br>'
-        elif  assocCall=='References':
-            ht+='<b>References ( ResultClass=' + resultClass + ', Role='
-            ht+= role + ', Properties=' + properties + ' )</b><br><br>'
-        elif  assocCall=='Reference Names':
-            ht+='<b>ReferenceNames ( ResultClass=' + resultClass + ', Role='
-            ht+= role + ', Properties=' + properties + ' )</b><br><br>'
-
-        refdict = {}
-        params = {}
-
-        if len(assocClass) > 0:
-            params['AssocClass'] = assocClass
-        if len(resultClass) > 0:
-            params['ResultClass'] = resultClass
-        if len(role) > 0:
-            params['Role'] = role
-        if len(resultRole) > 0:
-            params['ResultRole'] = resultRole
-        if assocCall=='Associators' or assocCall=='References':
-            params['IncludeQualifiers'] = True
-
-        if assocCall=='Associators':
-            assocs = conn.Associators(ObjectName=instName, **params)
-            ht += 'Showing ' + `len(assocs)`
-            ht += ' resulting object(s). <br><br>'
-            for assoc in assocs:
-                assocInstPath = assoc.path
-                assocInst = assoc
-                assocClassName = assocInst.classname
-                ht += '<hr><h2>Objects of Class: '
-                ht += assocClassName + '</h2>'
-                ht += _printInstanceNames(request, urlargs,
-                        [assocInstPath])
-
-                klass = conn.GetClass(ClassName=assocInstPath.classname, 
-                        namespace=assocInstPath.namespace,
-                        LocalOnly=False, IncludeQualifiers=True)
-                ht += self._displayInstance(request,
-                        assocInst, assocInstPath, klass, urlargs)
-        elif  assocCall=='Associator Names':
-            assocNames = conn.AssociatorNames(ObjectName=instName,
-                    **params)#, properties)
-            ht += 'Showing ' + `len(assocNames)`
-            ht += ' resulting object(s). <br><br>'
-            for assocName in assocNames:
-                assocInstPath = assocName
-                ht += '<hr><h2>Objects of Class: '
-                ht += assocInstPath.classname + '</h2>'
-                ht += self._printInstanceNames(request, urlargs,
-                        [assocInstPath])
-        elif  assocCall=='References':
-            refs = conn.References(ObjectName=instName, **params)
-            ht += 'Showing ' + `len(refs)`
-            ht += ' resulting object(s). <br><br>'
-            for ref in refs:
-                assocInstPath = ref.path
-                assocInst = ref
-                assocClassName = assocInst.classname
-                ht += self._printInstanceNames(request, urlargs,
-                        [assocInstPath])
-
-                klass = conn.GetClass(ClassName=assocInstPath.classname,
-                        LocalOnly=False, IncludeQualifiers=True)
-                ht += self._displayInstance(request,
-                        assocInst, assocInstPath, klass, urlargs)
-        elif  assocCall=='Reference Names':
-            refNames = conn.ReferenceNames(ObjectName=instName, **params)
-            ht += 'Showing ' + `len(refNames)`
-            ht += ' resulting object(s). <br><br>'
-            for refName in refNames:
-                assocInstPath = refName
-                ht += '<hr><h2>Objects of Class: '
-                ht += assocInstPath.classname + '</h2>'
-                ht += self._printInstanceNames(request, urlargs,
-                        [assocInstPath])
-
-        return ht + '</body></html>'
-
-    @view()
-    def on_FilteredReferenceNamesDialog(self, request, obj, url=None, ns=None):
-        conn = self._frontMatter(request, url, ns)
-        urlargs = { 'ns' : ns, 'url' : url }
-        class_urlargs = urlargs.copy()
-        class_urlargs["className"] = obj.classname
-        ht = self._printHead('Filtered ReferenceNames Dialog... (Coming...)',
-                urlargs=class_urlargs)
-        ht+= '<h1>Filtered References on Class '
-        ht+= self._makeHref(request, 'GetClass', class_urlargs,
-                obj.classname)+'</h1>'
-        ht+= self._printInstanceNames(request, class_urlargs, [obj])
-        ht+= '<br><br><br><form type=get action="'
-        ht+= self.urls.build("FilteredReferenceNames", urlargs)
-        ht+= '" METHOD=GET>'
-        ht+= '<table border=1>'
-        ht+= '<tr><td>Association Class<br><i>Not applicable for Reference/ReferenceNames</i></td><td><input type=text name="assocClass"></td></tr>'
-        ht+= '<tr><td>Result Class</td><td><input type=text name="resultClass"></td></tr>'
-        ht+= '<tr><td>Role</td><td><input type=text name="role"</td></tr>'
-        ht+= '<tr><td>Result Role<br><i>Not applicable for Reference/ReferenceNames</i></td><td><input type=text name="resultRole"></td></tr>'
-        ht+= '<tr><td>Properties<br><i>Comma-separated</i></td><td><input type=text name="properties"></td></tr>'
-        ht+= '<tr><td valign=top>Call Type</td><td><select name="assocCall"><option value="Associators">Associator<br>'
-        ht+= '<option value="Associator Names">Associator Names<br>'
-        ht+= '<option value="References">References<br>'
-        ht+= '<option value="Reference Names">Reference Names</select></td></tr>'
-        ht+= '<tr><td colspan=2 align=right><input type=submit value="Submit"></td></tr>'
-        ht+= '</table>'
-        ht+= '</form>'
-        return ht + '</body></html>'
-
-    @view()
-    def on_GetClass(self, request, className, url=None, ns=None):
-        conn = self._frontMatter(request, url, ns)
-        urlargs = {}
-        urlargs['ns'] = ns
-        urlargs['url'] = url
-        klass = conn.GetClass(ClassName=className, LocalOnly=False, 
-                IncludeClassOrigin=True, IncludeQualifiers=True)
-        urlargs['className'] = className
-        ht = self._printHead('Class '+className, 'Class '+className, request,
-                urlargs=urlargs)
-        instUrlArgs = urlargs.copy()
-        ht+= '<table border=0><tr><td>'
-        ht+= '<div align=center>'
-        ht+= self._makeHref(request, 'DeleteClass', urlargs, 'Delete Class')
-        del urlargs['className']
-        ht+= '. ' + self._makeHref(request, 'GetInstD', instUrlArgs,
-                'Get Instance')
-        ht+= ' or view '+self._makeHref(request, 'EnumInstanceNames',
-                instUrlArgs, 'Instance Names')
-        ht+= ' or '+self._makeHref(request, 'EnumInstances',
-                instUrlArgs, 'Instances')
-        ht+= ' or '+self._makeHref(request, 'AssociatedClasses',
-                instUrlArgs, 'Associated Classes')
-        ht+= ' of this class.'
-        if codegen is not None:
-            ht+= ' &nbsp;'+ self._makeHref(request, 
-                       'PyProvider', instUrlArgs, 'Python Provider')
-        ht+= ' &nbsp;'+ self._makeHref(request, 
-                   'CMPIProvider', instUrlArgs, 'CMPI Provider')
-        ht+= '</div>'
-        ht+= '<table border="1" cellpadding="2">'
-        if klass.qualifiers.has_key('aggregation'):
-            titleBGColor = "green"
-        elif klass.qualifiers.has_key('association'):
-            titleBGColor = "red"
         else:
-            titleBGColor = "black"
-        ht+= '<tr><td valign="middle" align="center" width="50%" bgcolor="'
-        ht+= titleBGColor+'"><b><font color="#FFFFFF">'
-        ht+= '<a name="'+className+'">'+className+'</a></font></b></td>'
-        ht+= '<td valign="middle" align="center" witdth="50%">'
-        if klass.superclass is not None:
-            gcUrlArgs = urlargs.copy()
-            gcUrlArgs["className"] = klass.superclass
-            ht+= '<b>Superclass: '+self._makeHref(request, 'GetClass',
-                    gcUrlArgs, klass.superclass)+'</font></b>'
-        ht+= '</td></tr>'
-        ht+= '<tr><td colspan="2"><table width="100%">'
-        if klass.qualifiers.has_key('description'):
-            ht+= '<tr><td colspan="3">'
-            ht+= cgi.escape(klass.qualifiers['description'].value)
-            ht+= '</td></tr>'
-            del klass.qualifiers['description']
-        if klass.qualifiers:
-            ht+= '<tr><td colspan="3"><b>Qualifiers:</b>'
-            firstTime = True
-            for qual in klass.qualifiers.values():
-                if firstTime:
-                    firstTime = False
-                else:
-                    ht+= ', '
-                ht+= qual.name
-                if qual.name not in ["Composition", "Association",
-                        "Aggregation"]:
-                    ht+= ' ("'+_val2str(qual.value)+'") '
-            ht+= '</td></tr>'
-        ht+= '<tr><td align="center" bgcolor="#C0C0C0" colspan="3"><b>'
-        ht+= 'Parameters (local in grey)</b></td></tr>'
-        ht+= '<td width="15"></td><td width="100%">'
-        ht+= '<table width="100%" border="1">'
-        localItems = []
-        nonLocalItems = []
-
-        for method in klass.methods.values():
-            if method.class_origin == className:
-                localItems.append(method)
-            else:
-                nonLocalItems.append(method)
-
-        for prop in klass.properties.values():
-            if prop.class_origin == className:
-                localItems.append(prop)
-            else:
-                nonLocalItems.append(prop)
-
-        for item in localItems + nonLocalItems:
-            desc = None
-            if item.qualifiers.has_key('description'):
-                desc = item.qualifiers['description'].value
-                del item.qualifiers['description']
-            deprecated = item.qualifiers.has_key('deprecated')
-            key = item.qualifiers.has_key('key')
-            if 'class_origin' in dir(item):
-                local = item.class_origin == className
-            else:
-                local = True
-            ht+= '<tr><td width="100%"'
-            if local:
-                ht+= ' bgcolor="#CCCCCC"'
-            ht+= '>'
-            ht+= '<a name="'+item.name.lower()+'"/>'
-            for qual in item.qualifiers.values():
-                ht+= qual.name + ' ' + _val2str(qual.value) + '<br />'
-            if isinstance(item, pywbem.CIMProperty):
-                if item.reference_class is not None:
-                    type = item.reference_class
-                else:
-                    type = item.type
-            elif isinstance(item, pywbem.CIMMethod):
-                type = (   item.return_type is not None
-                       and item.return_type or 'void')
-            else:
-                type = "&lt;Unknown&gt;"  # TODO is there anything else?
-            ht+= type
-            if deprecated:
-                ht+= '<strike>'
-            if key:
-                ht+= '<font color="#FF0000">'
-            ht+= ' <b>'
-            if isinstance(item, pywbem.CIMMethod):
-                methUrlArgs = urlargs.copy()
-                methUrlArgs['obj'] = pywbem.CIMClassName(
-                        className, namespace=ns)
-                methUrlArgs['method'] = item.name
-                ht+= self._makeHref(request, 'PrepMethod', methUrlArgs,
-                        item.name)
-            else:
-                ht+= item.name
-            ht+= '</b>'
-            if isinstance(item, pywbem.CIMProperty) and item.is_array:
-                ht+= '[ ]'
-            if deprecated:
-                ht+= '</strike>'
-            if isinstance(item, pywbem.CIMMethod):
-                ht += '('
-                if len(item.parameters) > 0:
-                    ht+= '<table cellpadding="0" 0="1" width="100%">'
-                    for param in item.parameters.values():
-                        pdesc = None
-                        if param.qualifiers.has_key('description'):
-                            pdesc = param.qualifiers['description'].value
-                            del param.qualifiers['description']
-                        ht+= '<tr>'
-                        ht+= '<td width="32" /> <td width="32" />'
-                        ht+= '<td>'
-                        if deprecated:
-                            ht+= '<strike>'
-                        if pdesc is not None:
-                            ht+= '<i>'+cgi.escape(pdesc)+'</i>'
-                            ht+= '<br />'
-                        if deprecated:
-                            ht+= '</strike>'
-
-                        if param.qualifiers:
-                            ht+= '<table><tr><td>Qualifiers:</td>'
-                            first = True
-                            for qual in param.qualifiers.values():
-                                if first:
-                                    first = False
-                                else:
-                                    ht+= '<tr><td></td>'
-                                ht+= '<td>'
-                                ht+= qual.name + ' ' + _val2str(qual.value)
-                                ht+= '</td></tr>'
-                            ht+= '</table>'
-                        ht+= '</td>'
-                        ht+= '</tr>'
-                        ht+= '<tr>'
-                        ht+= '<td width="32" />'
-                        ht+= '<td colspan="2">'
-                        if deprecated:
-                            ht+= '<strike>'
-                        if param.reference_class is not None:
-                            ht+= param.reference_class
-                            ht+= ' REF'
-                        else:
-                            ht+= param.type
-                        ht+= ' <b>'+param.name+'</b>'
-                        if param.is_array:
-                            ht+= ' [ '
-                            if param.array_size is not None:
-                                ht+= `param.array_size`
-                            else:
-                                ht+= ' '
-                            ht+= ']'
-                        if deprecated:
-                            ht+= '</strike>'
-                        ht+= '</td>'
-                        ht+= '</tr>'
-                    ht+= '</table>'
-                ht+= ')'
-                ht+= '<br />'
-            else:
-                ht+= ';<br />'
-            if key:
-                ht+= '</font>'
-            if desc is not None:
-                if deprecated:
-                    ht+= '<strike>'
-                ht+= '<i>'+cgi.escape(desc)+'</i><br />'
-                if deprecated:
-                    ht+= '</strike>'
-            if not local:
-                coUrlArgs = urlargs.copy()
-                coUrlArgs["className"] = item.class_origin
-                if item.class_origin is not None:
-                    ht+= '<i>Class Origin</i>: '+self._makeHref(
-                            request, 'GetClass', coUrlArgs, item.class_origin)
-            ht+= '</td></tr>'
-        ht+= '</table></table></table></td></tr></table>'
-        return ht + '</body></html>'
+            nsd = {}
+        return self.render('enum_namespaces.mako',
+                namespaces = nslist,
+                nsd        = nsd)
 
     @view(http_method=GET_AND_POST)
-    def on_GetInstance(self, request, className=None, obj=None,
-            url=None, ns=None, **params):
-        if className is None and obj is None:
-            raise ValueError("either className or obj must be given")
-        conn = self._frontMatter(request, url, ns)
-        urlargs = {}
-        urlargs['ns'] = ns
-        urlargs['url'] = url
-        if obj is None:
-            # Remove 'PropName.' prefix from param names.
-            params = dict ([(x[9:],y) for (x, y) in params.items()])
-            obj = pywbem.CIMInstanceName(className, 
-                    keybindings=params, namespace=ns)
-        inst = None
-        klass = conn.GetClass(ClassName=obj.classname, 
-                LocalOnly=False, IncludeQualifiers=True)
-        inst = conn.GetInstance(InstanceName=obj, LocalOnly = False)
-        ht = self._printHead('Instance of '+obj.classname,
-                req=request, urlargs=urlargs)
-        ht+= self._displayInstance(request, inst, obj, klass, urlargs)
-        return ht + '</body></html>'
+    def on_FilteredReferenceNames(self, path,
+            assocCall=None, assocClass="",
+            resultClass="", role="", resultRole="", properties=""):
+        conn = self.conn
+        if assocCall is None:
+            raise BadRequest('missing "assocCall" argument')
+        if assocCall.lower() not in assoc_calls:
+            raise BadRequest('assocCall must be one of: [%s]'%
+                    ', '.join(assoc_calls))
+        assocCall = assoc_calls.index(assocCall.lower())
+
+        params = {}
+        if assocClass:
+            params['AssocClass'] = assocClass
+        if resultClass:
+            params['ResultClass'] = resultClass
+        if role:
+            params['Role'] = role
+        if resultRole:
+            params['ResultRole'] = resultRole
+        if assocCall in (AC_ASSOCIATORS, AC_REFERENCES):
+            params['IncludeQualifiers'] = True
+
+        results = []
+        funcs = { AC_ASSOCIATORS      : 'Associators'
+                , AC_ASSOCIATOR_NAMES : 'AssociatorNames'
+                , AC_REFERENCES       : 'References'
+                , AC_REFERENCE_NAMES  : 'ReferenceNames' }
+        objs = getattr(conn, funcs[assocCall])(ObjectName=path, **params)
+
+        for o in objs:
+            if assocCall in (AC_ASSOCIATORS, AC_REFERENCES):
+                # o is CIMInstance
+                klass = conn.GetClass(
+                        ClassName=o.path.classname,
+                        namespace=o.path.namespace,
+                        LocalOnly=False, IncludeQualifiers=True)
+                results.append(get_inst_info(o, klass))
+            else:
+                results.append(get_inst_info(o))
+
+        return self.render('filtered_reference_names.mako',
+                className        = path.classname,
+                assoc_call       = assoc_calls[assocCall],
+                assoc_call_label = assoc_call_labels[assocCall],
+                assoc_class      = assocClass,
+                result_class     = resultClass,
+                role             = role,
+                result_role      = resultRole,
+                properties       = properties,
+                results          = results)
 
     @view()
-    def on_GetInstD(self, request, className, url=None, ns=None):
-        conn = self._frontMatter(request, url, ns)
-        klass = conn.GetClass(ClassName=className, LocalOnly=False, 
+    def on_FilteredReferenceNamesDialog(self, path):
+        return self.render('filtered_reference_names_dialog.mako',
+                path       = path,
+                className  = path.classname,
+                iname      = get_inst_info(path))
+
+    @view()
+    def on_GetClass(self, className):
+        klass = self.conn.GetClass(ClassName=className, LocalOnly=False,
+                IncludeClassOrigin=True, IncludeQualifiers=True)
+        kwargs = {
+                'className'   : className,
+                'super_class' : klass.superclass,
+                'aggregation' : klass.qualifiers.has_key('aggregation'),
+                'association' : klass.qualifiers.has_key('association')
+        }
+        if klass.qualifiers.has_key('description'):
+            kwargs['description'] = klass.qualifiers['description'].value
+        else:
+            kwargs['description'] = None
+        if klass.qualifiers:
+            kwargs['qualifiers'] = [ (q.name, _val2str(q.value))
+                    for q in klass.qualifiers.values()
+                    if  q.name.lower() != 'description']
+        else:
+            kwargs['qualifiers'] = []
+
+        items =  []
+        for item in chain(klass.methods.values(), klass.properties.values()):
+            items.append(get_class_item_details(className, item))
+        kwargs['items'] = sorted(items, _cmp_params(klass))
+
+        return self.render('get_class.mako', **kwargs)
+
+    @view(http_method=GET_AND_POST)
+    def on_GetInstance(self, className=None, path=None, **params):
+        if className is None and path is None:
+            raise ValueError("either className or path must be given")
+        conn = self.conn
+        if path is None:
+            # Remove 'PropName.' prefix from param names.
+            params = dict([(x[9:],y) for (x, y) in params.items()
+                                     if x.startswith('PropName.')])
+            path = pywbem.CIMInstanceName(className,
+                    keybindings=params, namespace=self._local.ns)
+
+        klass = conn.GetClass(ClassName=path.classname,
+                LocalOnly=False, IncludeQualifiers=True)
+        inst = conn.GetInstance(InstanceName=path, LocalOnly = False)
+
+        return self.render('get_instance.mako',
+                className = path.classname,
+                instance = get_inst_info(inst, klass))
+
+    @view()
+    def on_GetInstD(self, className):
+        klass = self.conn.GetClass(ClassName=className, LocalOnly=False,
                 IncludeQualifiers=True)
-        ht = self._printHead('Get Instance of '+className,
-                'Get Instance of '+className, request,
-                urlargs={'ns':ns, 'url':url})
-        ht+= self._displayInstanceMod(request, url, ns, klass, getInst=True)
-        return ht + '</body></html>'
+
+        items = [   get_class_item_details(className, i)
+            for i in sorted(klass.properties.values(), key=lambda a: a.name)
+            if  i.qualifiers.has_key('key') ]
+        return self.render('get_instance_dialog.mako',
+                className = className,
+                items     = items)
 
     @view(http_method=POST)
-    def on_InvokeMethod(self, request, obj, method,
-            url=None, ns=None, **params):
-        conn = self._frontMatter(request, url, ns)
-        urlargs = {}
-        urlargs['ns'] = ns
-        urlargs['url'] = url
-        className = None
-        if (   isinstance(obj, pywbem.CIMInstanceName)
-           and obj.namespace is None):
-            obj.namespace = ns
-        className = obj.classname
-        urlargs['className'] = className
-        # else obj is a CIMInstanceName
-        klass = conn.GetClass(ClassName = obj.classname, 
-                LocalOnly=False)
-        ht = 'Invoked method '+self._makeHref(request, 'GetClass',
-                urlargs, className)
-        ht+= '::'+self._makeHref(request, 'GetClass', urlargs,
-                method, '#'+method.lower())
-        ht+= '()'
-        ht = self._printHead('Results of Method '+className+'::'+method, ht,
-                request, urlargs=urlargs)
-
+    def on_InvokeMethod(self, method, path=None, className=None, **params):
+        if path is None and className is None:
+            raise ValueError("either object path or className argument must"
+                    " be given")
+        conn = self.conn
+        if className is None:
+            className = path.classname
+        if (   isinstance(path, pywbem.CIMInstanceName)
+           and path.namespace is None):
+            path.namespace = self._local.ns
+        klass = conn.GetClass(ClassName = className, LocalOnly=False)
         cimmethod = klass.methods[method]
-        inParms = {}
 
-        def type_str (meta_parm):
-            if meta_parm.reference_class is not None:
-                urlargs['className'] = metaParm.reference_class
-                dt = 'REF ' + self._makeHref(request, 'GetClass', urlargs, 
-                                        metaParm.reference_class)
-            else:
-                dt = metaParm.type
-            if metaParm.is_array:
-                dt+= '[]'
-            return dt
+        in_values  = defaultdict(str)
+        out_values = defaultdict(str)
 
-        if params:
-            # Remove 'MethParm.' prefix from param names.
-            params = dict ([(x[9:],y) for (x, y) in params.items()
-                if x.startswith('MethParm.')])
-            ht+= '<h3>With Input Parameters</h3>'
-            ht+= '<table valign=top border=1>'
-            ht+= ' <tr bgcolor="#CCCCCC"><th>Data Type</th>'
-            ht+= '<th>Param Name</th><th>Value</th></tr>'
-            for paramName, paramVal in params.items():
-                metaParm = cimmethod.parameters[paramName]
-                dt = type_str(metaParm)
-                ht+= ' <tr><td>'+dt+'</td>'
-                ht+= ' <td>'+paramName+'</td>'
-                ht+= ' <td>'+_val2str(paramVal)+'</td></tr>'
-                if paramVal:
-                    if metaParm.is_array:
-                        if type(paramVal) is not list:
-                            paramVal = paramVal.strip()
-                            paramVal = paramVal.strip('{}[]')
-                            paramVal = paramVal.strip()
-                            if len(paramVal) > 2 and dt == 'string' \
-                               and paramVal[0] == '"' and paramVal[-1] == '"' :
-                                paramVal = '['+paramVal+']'
-                                paramVal = eval(paramVal)
-                            else:
-                                paramVal = paramVal.split(",")
-                                paramVal = [x.strip() for x in paramVal]
-                        if metaParm.reference_class is not None:
-                            paramVal = [x for x in paramVal]
-                        else:
-                            paramVal = [   pywbem.tocimobj(dt[:-2], x)
-                                       for x in paramVal]
-                        inParms[paramName] = paramVal
-                    else:
-                        if metaParm.reference_class is not None:
-                            inParms[paramName] = paramVal
-                        else:
-                            inParms[paramName] = pywbem.tocimobj(dt, paramVal)
-            ht+= '</table>'
+        in_params = {}
 
-        (rval, outParms) = conn.InvokeMethod(MethodName=method,
-                ObjectName=obj, **inParms)
+        tmpl_in_params, tmpl_out_params = get_method_params(
+                className, cimmethod)
 
-        if outParms:
-            ht+= '<h3>Output Values</h3>'
-            ht+= '<table border=1><tr bgcolor="#CCCCCC">'
-            ht+= '<th>Data Type</th><th>Param Name</th><th>Value</th></tr>'
-            for parmName, parm in outParms.items():
-                metaParm = cimmethod.parameters[parmName]
-                isRef = metaParm.reference_class is not None
-                dt = type_str(metaParm)
-                ht+= '<tr><td>'+dt+'</td><td>'+metaParm.name+'</td><td>'
-                if (   metaParm.qualifiers.has_key('values')
-                   and metaParm.qualifiers.has_key('valuemap')):
-                    display = str(parm)
-                    valmapQual = metaParm.qualifiers['valuemap'].value
-                    valuesQual = metaParm.qualifiers['values'].value
-                    if display in valmapQual:
-                        valIdx = valmapQual.index(display)
-                        if valIdx < len(valuesQual):
-                            display = display + ' ('+valuesQual[valIdx]+')'
-                    ht+= display
-                else:
-                    if isRef and parm is not None:
-                        urlargs['obj'] = parm
-                        ht+= self._makeHref(request, 'GetInstance',
-                                urlargs, _val2str(parm))
-                    else:
-                        ht+= _val2str(parm)
-                ht+= '</td></tr>'
-            ht+= '</table>'
+        for p in tmpl_in_params:
+            value = formvalue2cimobject(p, 'MethParam.', params)
+            p['value'] = _val2str(value)
+            if value is not None:
+                in_params[p['name']] = value
 
-        ht+= '<font size=+1><b>Method returned:</b></font> ' + _val2str(rval)
-        urlargs['className'] = className
-        ht+= '<p>Return to class ' + self._makeHref(request, 'GetClass',
-                urlargs, className)
-        if isinstance(obj, pywbem.CIMInstanceName):
-            del urlargs['className']
-            ht+= ' or instance of '+className + ':'
-            ht+=self._printInstanceNames(request, urlargs, [obj])
+        (rval, out_params) = conn.InvokeMethod(
+                MethodName = method,
+                ObjectName = className if path is None else path,
+                **in_params)
 
-        return ht + '</body></html>'
+        out_values = {}
+        if out_params:
+            for p in tmpl_out_params:
+                value = formvalue2cimobject(p, '', out_params)
+                p['value'] = _val2str(value)
+
+        iname = None
+        if path is not None:
+            iname = get_inst_info(path, klass)
+
+        return self.render('invoke_method.mako',
+                className    = className,
+                method_name  = method,
+                iname        = iname,
+                in_params    = tmpl_in_params,
+                out_params   = tmpl_out_params,
+                return_value = _val2str(rval))
 
     @view(http_method=POST, require_url=False, require_ns=False,
             returns_response=True)
-    def on_Login(self, request, **kwargs):
-        """ @return (url, ns) """
+    def on_Login(self, **kwargs):
         try:
             scheme, host, port = [kwargs[k] for k in (
                 "scheme", "host", "port")]
@@ -2430,263 +1447,86 @@ class Yawn(object):
         if not (  (scheme == 'https' and port == '5989')
                or (scheme == 'http' and port == '5988')):
             url += ':'+port
-        #if 'user' in request.form and request.form['user']:
-            #resp = self.response
-            #resp.cookies['user'] = request.form['user']
-            #resp.cookies['password'] = request.form['pass
         if host[0] == '/':
             url = host
+        self._local.url = url
+        self._local.ns = ns
         if ns:
-            return self.on_EnumClassNames(request, url=url, ns=ns)
-        return self.on_EnumNamespaces(request, url=url)
+            return self.on_EnumClassNames()
+        return self.on_EnumNamespaces()
 
     @view(require_url=False, require_ns=False)
-    def on_Logout(self, request):
+    def on_Logout(self):
         # Enable the client to reauthenticate, possibly as a new user
-        self.response.set_cookie('yawn_logout', "true", path=_baseScript(request))
-        refurl = _baseScript(request)
-        ht = '<HTML>'
-        ht+= '<META HTTP-EQUIV="Refresh" CONTENT="1;URL='+refurl+'">'
-        ht+= '<HEAD><TITLE>Logging out...</TITLE> </HEAD>'
-        ht+= '<BODY>Logging out...<br>'
-        return ht + '</body></html>'
+        self.response.set_cookie('yawn_logout', "true",
+                path=_base_script(self._local.request))
+        return self.render('logout.mako')
 
     @view(http_method=POST)
-    def on_ModifyInstance(self, request, obj, url=None, ns=None,
-            **params):
-        conn = self._frontMatter(request, url, ns)
-        ht = self._createOrModifyInstance(request, url, ns, obj.classname,
-                obj, **params)
-        return ht + '</body></html>'
+    def on_ModifyInstance(self, path, **params):
+        return self._createOrModifyInstance(path.classname, path, **params)
 
     @view(http_method=GET_AND_POST)
-    def on_ModifyInstPrep(self, request, obj, url=None, ns=None):
-        conn = self._frontMatter(request, url, ns)
-        instPath = _encodeObject(obj)
-        klass = conn.GetClass(ClassName=obj.classname, 
+    def on_ModifyInstPrep(self, path):
+        conn = self.conn
+        klass = conn.GetClass(ClassName=path.classname,
                 LocalOnly=False, IncludeQualifiers=True)
-        ht = self._printHead('Modify Instance of '+obj.classname,
-                'Modify Instance of '+obj.classname,
-                request, urlargs={'ns':ns, 'url':url})
-        ht+= self._displayInstanceMod(request, url, ns, klass, (instPath, obj))
-        return ht + '</body></html>'
+        inst  = conn.GetInstance(InstanceName=path,
+                LocalOnly=False, IncludeQualifiers=True)
+        instance = get_inst_info(inst, klass) #, include_all=True
 
-    @view()
-    def on_MofComp(self, request, file, text, url=None, ns=None):
-        conn = self._frontMatter(request, url, 'root/cimv2')
-        ht = self._printHead("MOF", "MOF", request, {'url':url})
-        ht+= "file:<pre>"
-        ht+= cgi.escape(file.value)
-        ht+= '</pre>'
-        ht+= 'text:<pre>'
-        ht+= cgi.escape(text)
-        ht+= '</pre>'
-        return ht + '</body></html>'
+        return self.render('modify_instance_prep.mako',
+            new       = False,
+            className = path.classname,
+            instance  = instance)
 
     @view(require_url=False, require_ns=False)
-    def on_Pickle(self, request, obj):
-        ht = self._printHead("Object", "Object Serialization", request)
-        ht+= '<p><i>To pass the following object as a Parameter Reference'
-        ht+= ' to a method call, copy this string to your clipboard and paste'
-        ht+= ' it to the parameter field.</i><p>'
-        ht+= '<hr>'+_encodeObject(obj)+'<hr>'
-        lobj = obj
-        ht+= '<p><pre>'+cgi.escape(lobj.tocimxml().toprettyxml())+'</pre>'
-        ht+= str(lobj)
-        return ht + '</body></head>'
+    def on_Pickle(self, path):
+        return self.render('pickle.mako',
+                className      = path.classname,
+                str_obj        = str(path),
+                compressed_obj = _encodeObject(path),
+                xml_obj        = path.tocimxml().toprettyxml())
 
     @view()
-    def on_PrepMethod(self, request, obj, method, url=None, ns=None):
-        conn = self._frontMatter(request, url, ns)
-        urlargs = {}
-        urlargs['ns'] = ns
-        urlargs['url'] = url
-        className = None
-        className = obj.classname
-        klass = conn.GetClass(ClassName = className, LocalOnly=False,
+    def on_PrepMethod(self, method, path=None, className=None):
+        if path is None and className is None:
+            raise ValueError("either object path or className argument must"
+                    " be given")
+        if className is None:
+            className = path.classname
+        klass = self.conn.GetClass(ClassName = className, LocalOnly=False,
                 IncludeQualifiers=True)
 
         cimmethod = klass.methods[method]
-        inParms = []
-        outParms = []
-        for param in cimmethod.parameters.values():
-            # TODO is IN assumed to be true if the IN qualifier is missing?
-            if (  not param.qualifiers.has_key('in')
-               or param.qualifiers['in'].value):
-                inParms.append(param)
-            if (   param.qualifiers.has_key('out')
-               and param.qualifiers['out'].value):
-                outParms.append(param)
+        in_params, out_params = get_method_params(className, cimmethod)
+        iname = None
+        if path is not None:
+            iname = get_inst_info(path, klass)
 
-        classUrlArgs = urlargs.copy()
-        classUrlArgs['className'] = className
-        ht = 'Invoke method '+self._makeHref(request, 'GetClass',
-                classUrlArgs, className)
-        ht+= '::'+self._makeHref(request, 'GetClass', classUrlArgs, method,
-                '#'+method.lower())+'()'
-        # note, ht passed in as param. 
-        ht = self._printHead('Method '+className+'::'+method, ht, request,
-                urlargs=urlargs)
-        if isinstance(obj, pywbem.CIMInstanceName):
-            ht+= 'on instance'
-            ht+= self._printInstanceNames(request, urlargs, [obj])
-        ht+= '<form action="'+self.urls.build("InvokeMethod",
-            { 'obj' : obj, 'method' : method }) + '" METHOD=POST>'
-        ht+= '<input type=hidden name="url" value="'+url+'">'
-        ht+= '<input type=hidden name="ns" value="'+ns+'">'
-        ht+= '<table border=0>'
-        needComboBox = False
-        if inParms:
-            someRequired = False
-            ht+= '<h3>Enter Input Parameters</h3>'
-            ht+= '<tr><td><table valign=top border=1>'
-            ht+= '<tr bgcolor="#CCCCCC"><th>Data Type</th>'
-            ht+= '<th>Param Name</th><th>Value</th></tr>'
-            for param in inParms:
-                ht+= '<tr valign=top'
-                if (   param.qualifiers.has_key('required')
-                   and param.qualifiers['required'].value):
-                    ht+= ' bgcolor="#FFDDDD"'
-                    someRequired = True
-
-                if param.reference_class is not None:
-                    ht+= '><td>'+param.reference_class
-                    ht+= ' REF'
-                else:
-                    ht+= '><td>'+param.type
-                if param.is_array:
-                    ht+= ' [ ]'
-                ht+= '</td>'
-                ht+= '<td'
-                if param.qualifiers.has_key('description'):
-                    ht+= ' title="'+cgi.escape(param.qualifiers['description'].value)+'"'
-                ht+= '>'
-                ht+= param.name
-                ht+= '</td><td>'
-                # avoid name collisions, in case some param is called ns, url, etc.
-                parmName = 'MethParm.'+param.name
-                if param.qualifiers.has_key('valuemap'):
-                    needComboBox = True
-                    valmapQual = param.qualifiers['valuemap'].value
-                    valuesQual = None
-                    if param.qualifiers.has_key('values'):
-                        valuesQual = param.qualifiers['values'].value
-
-                    # Disable the combobox for now, because it isn't working, and
-                    # we may not actually need it.  For example, perhaps any time
-                    # values from VendorReserved are used, the vendor's subclass
-                    # will override the method, and thus the qualifiers, and provide
-                    # specific valuemap extensions that would in turn show up in our
-                    # drop down.
-                    #ht+= '<select name="'+parmName+'" class="comboBox">'
-                    ht+= '<select name="'+parmName+'"'
-                    if param.is_array:
-                        ht+= ' MULTIPLE SIZE=4'
-                    ht+= '>'
-                    if not param.is_array:
-                        ht+= '<option value="">'
-                    for i in range(0, len(valmapQual)):
-                        curVal = valmapQual[i]
-                        # skip valuemap items that aren't valid values
-                        # such as the numeric ranges for DMTF Reserved and whatnot
-                        try:
-                            pywbem.tocimobj(param.type, curVal)
-                        except:
-                            continue
-                        ht+= '<option value="'+curVal+'">'+curVal
-                        if valuesQual and i < len(valuesQual):
-                            ht+= ' ('+valuesQual[i]+')'
-                    ht+= '</select>'
-
-                elif param.type == 'boolean':
-                    ht+= '<select name="'+parmName+'">'
-                    ht+= '<option value='""'>'
-                    ht+= '<option value="True">True'
-                    ht+= '<option value="False">False'
-                    ht+= '</select>'
-                else:
-                    ht+= '<input type=text size=50 name="'+parmName+'">'
-                ht+= '</td></tr>'
-            ht+= '</table></td></tr>'
-            ht+= '<tr>'
-            if someRequired:
-                ht+= '<td><table border=0><tr><td nowrap bgcolor="#FFDDDD">'
-                ht+= '<i>Required Parameter</i></td><td width="100%" align="right">'
-            else:
-                ht+= '<td align="right">'
-            ht+= '<input type=submit value="Invoke Method"></td></tr>'
-            if someRequired:
-                ht+= '</table></td></tr>'
-            ht+= '</table>'
-        else:
-            ht+= '<input type=submit value="Invoke Method">'
-        ht+= '</form>'
-        if outParms:
-            ht+= '<h3>Output Parameters</h3>'
-            ht+= '<table valign=top border=1><tr bgcolor="#CCCCCC">'
-            ht+= '<th>Data Type</th><th>Param Name</th></tr>'
-            for param in outParms:
-                ht+= '<tr valign=top><td>'
-                if param.reference_class is not None:
-                    ht+= param.reference_class
-                    ht+= ' REF'
-                else:
-                    ht+= param.type
-                if param.is_array:
-                    ht+= ' [ ]'
-                ht+= '</td><td'
-                if param.qualifiers.has_key('description'):
-                    ht+= ' title="'+cgi.escape(
-                            param.qualifiers['description'].value)+'"'
-                ht+= '>'+param.name+'</td></tr>'
-            ht+= '</table>'
-        rtype = (  cimmethod.return_type is not None
-                and cimmethod.return_type or 'void')
-        ht+= '<h3>Method return type: '+rtype+'</h3>'
-
-        if needComboBox:
-            ht+= _comboBox_js
-
-        return ht +'</body></html>'
-
-    @view(require_ns=False)
-    def on_PrepMofComp(self, request, url=None):
-        conn = self._frontMatter(request, url, 'root/cimv2')
-        ht = self._printHead("MOF", "MOF", request, {'url':url})
-        ht+= '<form action="'+self.urls.build('MofComp') + '" '
-        ht+= 'enctype="multipart/form-data" METHOD=POST>'
-        ht+= '<input type=hidden name="url" value="'+url+'"/>'
-        ht+= '<input type=hidden name="ns" value="'+'root/cimv2'+'"/>'
-        ht+= '<input id="file" name="file" size="70" type="file" />'
-        ht+= '<p><textarea cols="80" id="text" name="text" rows="40">'
-        ht+= '</textarea>'
-        ht+= '<p><input name="commit" type="submit" value="Submit" />'
-        ht+= '</form>'
-        return ht + '</body></html>'
+        return self.render('prep_method.mako',
+                className   = className,
+                method_name = method,
+                iname       = iname,
+                in_params   = in_params,
+                out_params  = out_params,
+                return_type = cimmethod.return_type)
 
     @view()
-    def on_PyProvider(self, request, className, url=None, ns=None):
-        conn = self._frontMatter(request, url, ns)
-        klass = conn.GetClass(ClassName = className, LocalOnly=False, 
+    def on_PyProvider(self, className):
+        klass = self.conn.GetClass(ClassName = className, LocalOnly=False,
                     IncludeClassOrigin=True, IncludeQualifiers=True)
         code, mof = codegen(klass)
-        title = 'Python Provider for %s' % className
-        ht = self._printHead(title, request)
-        ht+= '<font size=+1><b>%s</b></font>' % title
-        ht+= '<table bgcolor="#f9f9f9" cellspacing=0 cellpadding=10 border=1>'
-        ht+= '<tr><td><pre>'+cgi.escape(code)+'</pre>'
-        ht+= '</td></tr></table>'
-        ht+= '<font size=+1><b>Provider Registration MOF</b></font>'
-        ht+= '<table bgcolor="#f9f9f9" cellspacing=0 cellpadding=10 border=1>'
-        ht+= '<tr><td><pre>'+cgi.escape(mof)+'</pre>'
-        ht+= '</td></tr></table>'
-        return ht + '</body></html>'
+        return self.render('py_provider.mako',
+                className = className,
+                code      = code,
+                mof       = mof)
 
     @view(http_method=POST)
-    def on_Query(self, request, query=None, lang=QLANG_WQL, url=None, ns=None):
-        conn = self._frontMatter(request, url, ns)
+    def on_Query(self, query=None, lang=QLANG_WQL):
+        conn = self.conn
         if query is None:
-            if "query" not in request.form:
+            if "query" not in self._local.request.form:
                 raise ValueError("missing query string argument")
             query = request.form["query"]
         if isinstance(lang, int):
@@ -2698,60 +1538,29 @@ class Yawn(object):
         else:
             raise TypeError("lang must be either string or integer not: {}".
                     format(lang.__class__.__name__))
-        urlargs = {}
-        urlargs['ns'] = ns
-        urlargs['url'] = url
-        insts = conn.ExecQuery(QueryLanguage=lang, Query=query, namespace=ns)
-        ht = self._printHead('Query Results', req=request, urlargs=urlargs)
-        ht+= '<h2>Query Results</h2><hr>'
-        ht+= 'Query Language = '+lang
-        ht+= '<br>Query = '+query
-        numInsts = len(insts)
-        msgStart = 'Showing '+`numInsts`+' Instances<br />'
-        if numInsts == 0:
-            msgStart = 'No Instances<br />'
-        elif numInsts == 1:
-            msgStart = ''
-        ht+= msgStart
+
+        insts = conn.ExecQuery(QueryLanguage=lang,
+                Query=query, namespace=self._local.ns)
+        results = []
         ccache = pywbem.NocaseDict()
         for inst in insts:
-            instName = inst.path
+            cn = inst.path.classname
             try:
-                klass = ccache[instName.classname]
+                klass = ccache[cn]
             except KeyError:
-                klass = conn.GetClass(instName.classname, LocalOnly=False)
-                ccache[instName.classname] = klass
-            ht += self._displayInstance(request, inst, instName,
-                    klass, urlargs.copy())
-        return ht + '</body></html>'
-
-
-    @view()
-    def on_QueryD(self, request, className='', url=None, ns=None):
-        conn = self._frontMatter(request, url, ns)
-        urlargs = {}
-        urlargs['ns'] = ns
-        urlargs['url'] = url
-        ht = self._printHead('Query', req=request, urlargs=urlargs)
-        ht+= '<h2>Execute Query</h2><hr>'
-        ht+= '<form action="'+self.urls.build('Query')+'" METHOD=POST>'
-        ht+= '<input type=hidden name="url" value="'+url+'">'
-        ht+= '<input type=hidden name="ns" value="'+ns+'">'
-        ht+= '<table border=0>'
-        ht+= '<tr><td>Query Language</td><td>'
-        ht+= '<select name="lang">'
-        ht+= '<option value="WQL">WQL'
-        #ht+= '<option value="CQL">CQL'
-        ht+= '</select></td></tr>'
-        ht+= '<tr><td>Query</td>'
-        ht+= ('<td><input type="text" value="SELECT * FROM %s WHERE"'
-              ' size=80 name="query"></td></tr>')% className
-        ht+= '</table>'
-        ht+= '<input type=submit value="Execute Query"></form>'
-        return ht + '</body></html>'
+                klass = ccache[cn] = conn.GetClass(cn, LocalOnly=False)
+            results.append(get_inst_info(inst, klass))
+        return self.render('query.mako',
+                qlang   = lang,
+                query   = query,
+                results = results)
 
     @view()
-    def on_ReferenceNames(self, request, obj, url=None, ns=None):
+    def on_QueryD(self, className=''):
+        return self.render('query_dialog.mako', className=className)
+
+    @view()
+    def on_ReferenceNames(self, path):
         """ The goal here is to list InstPaths to all related objects, grouped
         in the
          following manner:
@@ -2773,26 +1582,11 @@ class Yawn(object):
          REF, we'll probably blow up.  We also won't follow non-key REF
          properties (if there are such things)
         """
-        conn = self._frontMatter(request, url, ns)
-        urlargs = {}
-        urlargs['ns'] = ns
-        urlargs['url'] = url
-        oldns = obj.namespace
+        oldns = path.namespace
         # TODO remove this namespace hack when pywbem is fixed
-        obj.namespace = None
-        refs = conn.ReferenceNames(ObjectName=obj)
-        obj.namespace = oldns is not None and oldns or ns
-
-        class_urlargs = urlargs.copy()
-        class_urlargs["className"] = obj.classname
-        ht = 'Objects associated with instance of '
-        ht+= self._makeHref(request, 'GetClass', class_urlargs,
-                obj.classname) 
-        ht = self._printHead('ReferenceNames '+obj.classname, ht, request,
-                urlargs)
-
-        ht += self._printInstanceNames(request, urlargs, [obj])
-        ht += '<hr>'
+        path.namespace = None
+        refs = self.conn.ReferenceNames(ObjectName=path)
+        path.namespace = oldns is not None and oldns or self._local.ns
 
         refdict = {}
         for ref in refs:
@@ -2802,81 +1596,29 @@ class Yawn(object):
                 refdict[assocClassName] = {}
             for role in refInstPath.keys():
                 roleInstPath = refInstPath[role]
-                if roleInstPath == obj:
+                if roleInstPath == path:
                     continue
-                if role not in refdict[assocClassName].keys():
+                if role not in refdict[assocClassName]:
                     refdict[assocClassName][role] = {}
                 roleClassName = roleInstPath.classname
-                if roleClassName not in refdict[assocClassName][role].keys():
+                if roleClassName not in refdict[assocClassName][role]:
                     refdict[assocClassName][role][roleClassName] = []
                 refdict[assocClassName][role][roleClassName].append(
                         roleInstPath)
-        assocClassNames = refdict.keys()
-        assocClassNames.sort()
-        ht+= '<h2>Associations Available</h2><ul>'
-        for assocClassName in assocClassNames:
-            ht += '<li><a href="#' + assocClassName + '">'+assocClassName
-            ht += '</a>'
-        ht += '</ul>'
-        for assocClassName in assocClassNames:
-            class_urlargs["className"] = assocClassName
-            assocLink = self._makeHref(request, 'GetClass', class_urlargs,
-                    assocClassName)
-            ht +=          '<a name="' + assocClassName + '"/>'
-            ht +=          '\n<table border="1">\n'
-            ht +=          '<tr>\n'
-            ht +=          '  <td>\n'
-            ht +=          '    <table>\n'
-            ht +=          '      <tr>\n'
-            ht +=          '        <td>\n'
-            ht +=          '          <font size=+3>Association: '+assocLink+'</font>\n'
-            ht +=          '        </td>\n'
-            ht +=          '      </tr>\n'
-            assocSet = refdict[assocClassName]
-            roles = assocSet.keys()
-            roles.sort()
-            for role in roles:
-                ht +=      '      <tr>\n'
-                ht +=      '        <td>\n'
-                ht +=      '          <table border="1">\n'
-                ht +=      '            <tr>\n'
-                ht +=      '              <td>\n'
-                ht +=      '                <font size=+2>Role: '+role+'</font>\n'
-                ht +=      '              </td>\n'
-                ht +=      '            </tr>\n'
-                classSet = assocSet[role]
-                classNames = classSet.keys()
-                classNames.sort()
-                for className in classNames:
-                    class_urlargs["className"] = className
-                    typeLink = self._makeHref(request, 'GetClass',
-                            class_urlargs, className)
-                    ht +=  '            <tr>\n'
-                    ht +=  '              <td>\n' 
-                    ht +=  '                <table>\n'
-                    ht +=  '                  <tr>\n'
-                    ht +=  '                    <td>\n'
-                    ht +=  '                      <font size=+1>Type: '+typeLink+'</font>\n'
-                    ht +=  '                    </td>\n'
-                    ht +=  '                  </tr>\n'
-                    ht +=  '                  <tr>\n'
-                    ht +=  '                    <td>\n'
-                    instPathSet = classSet[className]
-                    instPathSet.sort()
-                    ht += self._printInstanceNames(request, urlargs,
-                            instPathSet)
-                    ht +=  '                    </td>\n'
-                    ht +=  '                  </tr>\n'
-                    ht +=  '                </table>\n'
-                    ht +=  '              </td>\n'
-                    ht +=  '            </tr>\n' 
-                ht +=      '          </table>\n'
-                ht +=      '        </td>\n'
-                ht +=      '      </tr>\n'
 
-            ht +=          '    </table>\n'
-            ht +=          '  </td>\n'
-            ht +=          '</tr>\n'
-            ht +=          '</table>\n'
-        return ht + "</body></html>"
+        refmap = {}
+        for assoc, roles in sorted(refdict.items(), key=lambda i: i[0]):
+            rols = refmap[assoc] = []
+            for role, refs in sorted(roles.items(), key=lambda i: i[0]):
+                if not refs: continue
+                rs = []
+                for cls, ref_paths in sorted(refs.items(), key=lambda i: i[0]):
+                    rfs = [ get_inst_info(p) for p in sorted(ref_paths) ]
+                    rs.append((cls, p.namespace, rfs))
+                rols.append((role, rs))
+
+        return self.render('reference_names.mako',
+                iname        = get_inst_info(path),
+                associations = sorted(refdict.keys()),
+                refmap       = refmap)
 

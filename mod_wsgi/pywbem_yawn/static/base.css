@@ -1,0 +1,40 @@
+body a:link { color: #0000ff }
+table#top_header {
+    border: 0px; 
+    padding: 0px;
+    border-spacing: 0px;
+}
+table#top_header td {
+    white-space: nowrap;
+    width: 100%;
+    vertical-align: top;
+    text-align: right;
+}
+table#top_header td.heading {
+    text-align: left;
+    vertical-align: top;
+}
+table#top_header td.nav {
+    font-style: italic;
+    font-size: 75%;
+    padding-right: 10px;
+}
+.null_val {
+    font-style: italic;
+    color: #999999
+}
+table.details, table.query {
+    border: 1px solid black;
+    border-spacing: 2px;
+}
+table.details tr, table.details td, table.details th {
+    border: 1px solid black;
+}
+.details table:not(.details) tr, .details table:not(.details) td,
+.details table:not(.details) th { border: 0px }
+.code {
+    border: 1px solid black;
+    padding: 5px;
+    background-color: #f9f9f9;
+}
+tr.headers { background-color: #CCCCCC }
