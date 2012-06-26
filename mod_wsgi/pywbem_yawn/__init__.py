@@ -909,7 +909,8 @@ class Yawn(object):
                     className, namespace=self._local.ns)
 
         for p in get_class_props(klass, inst=inst):
-            if p['is_key']: continue # do not allow key modification
+            if path is not None and p['is_key']:
+                continue # do not allow key modification
             value = formvalue2cimobject(p, 'PropName.', params)
             if (  value is None
                or (isinstance(value, list) and len(value) == 0)):
