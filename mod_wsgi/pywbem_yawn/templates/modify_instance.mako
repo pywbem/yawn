@@ -13,7 +13,7 @@
   <% args = {'url':url, 'ns':ns, 'path':instance['path'] } %>
   <meta http-equiv="Refresh" content="1;url=${urls.build('GetInstance', args)}" />
 </%def>
-<%def name="content()" filter="h">
+<%def name="content()">
   <% args = {'url':url, 'ns':ns, 'path':instance['path'] } %>
   The Instance has been saved. Refreshing...</br>
   If your browser doesn't refresh to the new instance,
