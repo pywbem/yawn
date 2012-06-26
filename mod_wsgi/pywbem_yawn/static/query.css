@@ -15,4 +15,7 @@ table#query_info {
 table#query_info tr.query td {
     font-family: monospace;
 }
+table.query input {
+    min-width: 400px;
+}
 
