@@ -819,7 +819,7 @@ class Yawn(object):
         if (   hasattr(self._local, 'connection')
            and self._local.connection.url == url
            and self._local.connection.default_namespace == ns):
-            return self._connection
+            return self._local.connection
 
         req = self._local.request
         (user, pw) = _get_user_pw(req)
@@ -928,7 +928,7 @@ class Yawn(object):
             conn.ModifyInstance(ModifiedInstance=inst)
         else:
             path = conn.CreateInstance(NewInstance=inst)
-        inst = self.conn.GetInstance(InstanceName=path, LocalOnly = False)
+        inst = conn.GetInstance(InstanceName=path, LocalOnly = False)
 
         return self.render('modify_instance.mako',
                 className = className,
