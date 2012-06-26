@@ -49,8 +49,9 @@
     <tr>
       <td>
         <div class="nav">
-          ${utils.make_href('DeleteClass', cargs, 'Delete Class')}
-          ${utils.make_href('GetInstD', cargs, 'Get Instance')}
+          ${utils.make_href('DeleteClass', cargs, 'Delete Class')},
+          ${utils.make_href('GetInstD', cargs, 'Get Instance')},
+          ${utils.make_href('CreateInstancePrep', cargs, 'Create Instance')}
           or view ${utils.make_href("EnumInstanceNames", cargs, 'Instance Names')}
           or ${utils.make_href('EnumInstances', cargs, 'Instances')}
           or ${utils.make_href('AssociatedClasses', cargs, 'AssociatedClasses')}
