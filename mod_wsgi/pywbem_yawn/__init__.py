@@ -405,12 +405,14 @@ def get_method_params(className, cimmethod):
 _decodeObject = lambda x: (cPickle.loads(
     zlib.decompress(base64.urlsafe_b64decode(x))))
 
-def formvalue2cimobject(param, prefix, formdata):
+def formvalue2cimobject(param, prefix, formdata, pop_used=False):
     """
     @param is a dictionary created by get_class_item_details
     @return value passable to pywbem methods
     """
     def value(name):
+        if pop_used:
+            return formdata.pop(prefix + name)
         return formdata[prefix + name]
     def process_simple_value(val):
         dt = param['type']
@@ -908,15 +910,17 @@ class Yawn(object):
             inst.path = pywbem.CIMInstanceName(
                     className, namespace=self._local.ns)
 
-        for p in get_class_props(klass, inst=inst):
+        for p in get_class_props(klass, inst=inst, include_all=True):
             if path is not None and p['is_key']:
-                continue # do not allow key modification
-            value = formvalue2cimobject(p, 'PropName.', params)
+                continue # do not allow key modification of existing instance 
+            value = formvalue2cimobject(p, 'PropName.', params, True)
             if (  value is None
                or (isinstance(value, list) and len(value) == 0)):
                 inst.update_existing([(p['name'], None)])
             else:
-                inst.properties[p['name']] = value
+                log.error("setting prop(name=%s) to: %s"%(p['name'], value))
+                inst[p['name']] = value
+        log.debug("not handled formvalues: {}".format(params))
         if path:
             if path.namespace is None:
                 path.namespace = self._local.ns
