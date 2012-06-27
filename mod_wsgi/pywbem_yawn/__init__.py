@@ -911,9 +911,12 @@ class Yawn(object):
                     className, namespace=self._local.ns)
 
         for p in get_class_props(klass, inst=inst, include_all=True):
-            if path is not None and p['is_key']:
-                continue # do not allow key modification of existing instance 
             value = formvalue2cimobject(p, 'PropName.', params, True)
+            if p['is_key']:
+                if path is None:
+                    inst.path[p['name']] = value
+                else: # do not allow key modification of existing instance 
+                    continue
             if (  value is None
                or (isinstance(value, list) and len(value) == 0)):
                 inst.update_existing([(p['name'], None)])
@@ -932,7 +935,7 @@ class Yawn(object):
 
         return self.render('modify_instance.mako',
                 className = className,
-                instance = get_inst_info(inst, klass))
+                instance  = get_inst_info(inst, klass))
 
     def _enumInstrumentedClassNames(self):
         fetched_classes = []
@@ -1105,8 +1108,8 @@ class Yawn(object):
     def on_DeleteInstance(self, path):
         self.conn.DeleteInstance(path)
         return self.render('delete_instance.mako',
-                path = path,
-                keys = sorted(sorted(path.keys())))
+                className = path.classname,
+                iname     = get_inst_info(path))
 
     @view()
     def on_EnumClassNames(self, className=None, mode=None, instOnly=None):
