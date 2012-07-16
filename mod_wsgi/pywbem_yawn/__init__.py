@@ -418,7 +418,8 @@ def formvalue2cimobject(param, prefix, formdata, pop_used=False):
         dt = param['type']
         if isinstance(dt, dict): # reference
             if not val: return None
-            return _decodeObject(val)
+            # base64 decode does not properly handle unicode
+            return _decodeObject(str(val))
         return pywbem.tocimobj(dt, val)
 
     if param['is_array']:
