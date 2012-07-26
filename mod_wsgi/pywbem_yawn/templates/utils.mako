@@ -301,7 +301,6 @@
     uses global variable 'new'
   </%doc>
   <%
-    if not params: return
     if not read_only:
       if action is None:
         args = {'method':method_name}
@@ -318,12 +317,13 @@
       if prefix is None:
         prefix = "MethParam."
   %>
-  % if caption is not False:
+  % if caption is not False and params:
     <h3>${caption | hs}</h3>
   % endif
   % if not read_only:
     <form action="${action}" method="post">
   % endif
+  % if params:
     <table id="in_params" class="in params">
       <tr class="headers">
         <th class="data_type">Data Type</th>
@@ -347,6 +347,7 @@
         </tr>
       % endfor
     </table>
+  % endif
     % if not read_only:
       <div class="submit">
         <input type="hidden" name="url" value="${url | h}" />
