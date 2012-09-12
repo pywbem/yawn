@@ -338,10 +338,14 @@ def get_class_props(klass=None, inst=None, include_all=False):
             p.update(_get_property_details(iprop, inst))
         elif isinstance(inst, pywbem.CIMInstanceName):
             if prop_name in inst:
-                p['is_key'] = True
-                p['is_array'] = isinstance(inst[prop_name], list)
-                p['value'] = _val2str(inst[prop_name])
-                p['value_orig'] = inst[prop_name]
+                value = inst[prop_name]
+                p['is_key']     = True
+                p['is_array']   = isinstance(inst[prop_name], list)
+                p['value']      = value
+                p['value_orig'] = value
+                if isinstance(value, pywbem.CIMInstanceName):
+                    p['type'] = { 'className' : value.classname
+                                , 'ns'        : value.namespace }
 
         props.append(p)
     return props
@@ -931,7 +935,6 @@ class Yawn(object):
                or (isinstance(value, list) and len(value) == 0)):
                 inst.update_existing([(p['name'], None)])
             else:
-                log.error("setting prop(name=%s) to: %s"%(p['name'], value))
                 inst[p['name']] = value
         log.debug("not handled formvalues: {}".format(params))
         if path:
