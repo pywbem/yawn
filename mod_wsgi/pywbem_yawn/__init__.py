@@ -28,6 +28,7 @@
 # @author Norm Paxton <npaxton@novell.com>
 # @author Michal Minar <miminar@redhat.com>
 
+import datetime
 import logging
 import traceback
 import re
@@ -462,6 +463,14 @@ class SafeString(unicode):
 def _val2str(x):
     if x is None:
         return SafeString('<span class="null_val">Null</span>')
+    if isinstance(x, pywbem.CIMDateTime):
+        x = x.timedelta if x.is_interval else x.datetime
+    if isinstance(x, datetime.datetime):
+        x = x.strftime("%Y/%m/%d %H:%M:%S.%f")
+    elif isinstance(x, datetime.date):
+        x = x.strftime("%Y/%m/%d")
+    elif isinstance(x, datetime.time):
+        x = x.strftime("%H:%M:%S.%f")
     if isinstance(x,list):
         rval = '{'
         if x:
