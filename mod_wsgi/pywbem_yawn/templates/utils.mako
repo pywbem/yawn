@@ -83,6 +83,8 @@
         args['ns'] = ns
       if not whole_path and cname:
         target = cname
+      elif not whole_path and p['type'].get('className', None):
+        target = p['type']['className']
       elif not whole_path and className:
         target = className
       else:
