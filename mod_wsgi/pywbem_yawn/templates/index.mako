@@ -35,9 +35,5 @@
     </table>
   </form>
   <hr />
-  <div class="foot">
-    <p>Powered by</p>
-    <img src="http://www.modpython.org/mod_python.gif" alt="MOD_PYTHON" />
-  </div>
 </%def>
 ## ex:ts=2:sw=2
