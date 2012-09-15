@@ -1463,7 +1463,7 @@ class Yawn(object):
         except KeyError:
             raise BadRequest(
                     "missing one of ['scheme', 'host', 'port'] arguments")
-        ns = kwargs.get('ns', None)
+        ns = kwargs.get('ns', getattr(self._local, 'ns', None))
         url = scheme+'://'+host
         if not (  (scheme == 'https' and port == '5989')
                or (scheme == 'http' and port == '5988')):
