@@ -205,9 +205,9 @@ def _get_property_details(prop, inst=None):
     if isinstance(prop, pywbem.CIMParameter):
         # TODO is IN assumed to be true if the IN qualifier is missing?
         i['in'] = (  not prop.qualifiers.has_key('in')
-                  or prop.qualifiers['in'])
+                  or prop.qualifiers['in'].value)
         i['out'] = (  prop.qualifiers.has_key('out')
-                   and prop.qualifiers['out'])
+                   and prop.qualifiers['out'].value)
 
     return i
 
