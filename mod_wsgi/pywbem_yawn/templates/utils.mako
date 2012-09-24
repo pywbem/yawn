@@ -310,14 +310,14 @@
           args['className'] = className
         else:
           args['path'] = iname['path']
-        if caption is None:
-          caption = (  'With Input Parameters'
-                    if read_only else 'Enter Input Parameters')
         action = urls.build('InvokeMethod', args)
       if submit is None:
         submit = "Invoke Method"
       if prefix is None:
         prefix = "MethParam."
+    if caption is None:
+      caption = (  'With Input Parameters'
+                if read_only else 'Enter Input Parameters')
   %>
   % if caption is not False and params:
     <h3>${caption | hs}</h3>
