@@ -1439,8 +1439,11 @@ class Yawn(object):
         out_values = {}
         if out_params:
             for p in tmpl_out_params:
-                value = formvalue2cimobject(p, '', out_params)
-                p['value'] = _val2str(value)
+                value = out_params[p['name']]
+                if isinstance(p['type'], dict):
+                    p['value'] = value
+                else:
+                    p['value'] = _val2str(value)
 
         iname = None
         if path is not None:
