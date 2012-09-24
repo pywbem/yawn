@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
         name = "yawn",
-        version = "0.1.3",
+        version = "0.1.4",
         packages = find_packages(),
         package_data = { 'pywbem_yawn' :
             ['templates/*.mako', 'static/*.css', 'static/*.js'] },
