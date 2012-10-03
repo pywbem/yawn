@@ -69,7 +69,7 @@
   return markupsafe.escape(res)
 %></%def>\
 
-<%def name="print_data_value(p, cname=None, whole_path=False)"><%doc>
+<%def name="print_data_value(p, whole_path=False)"><%doc>
     if value is an object path and whole_path is True, then its string
     representation is printed
     it whole_path is False, then only classname part is printed
@@ -81,9 +81,7 @@
              , 'path': p['value'] }
       if not args['ns'] and ns:
         args['ns'] = ns
-      if not whole_path and cname:
-        target = cname
-      elif not whole_path and p['type'].get('className', None):
+      if not whole_path and p['type'].get('className', None):
         target = p['type']['className']
       elif not whole_path and className:
         target = className
@@ -244,7 +242,7 @@
     % endif
     % for p in iname['props']:
       % if p['is_key']:
-        <td>${print_data_value(p, iname['className'], whole_path=whole_path)}</td>
+        <td>${print_data_value(p, whole_path=whole_path)}</td>
       % endif
     % endfor
     <td class="namespace">${iname['ns'] | hs}</td>
