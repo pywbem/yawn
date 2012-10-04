@@ -1,5 +1,5 @@
 show associators object paths on ReferenceNames results
-render nice value of 'method returned' on method invication page
+make nice page for CIM_ERR_NOT_FOUND and CIM_ERR_NOT_SUPPORTED
 
 make some tests
 python 3 support

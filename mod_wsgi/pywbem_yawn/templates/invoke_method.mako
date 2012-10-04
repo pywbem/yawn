@@ -28,7 +28,7 @@
   ${utils.show_output_params(out_params, with_values=True)}
   <div id="results">
     <span class="caption">Method returned:</span>
-    <span class="value">${return_value | hs}</span>
+    <span class="value">${utils.print_data_value(return_value, True)}</span>
   </div>
   <div class="nav">
     <% args = {'ns':ns, 'url':url, 'className':className} %>

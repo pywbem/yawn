@@ -1449,13 +1449,23 @@ class Yawn(object):
         if path is not None:
             iname = get_inst_info(path, klass)
 
+        out = get_class_item_details(className, cimmethod, path)
+        out['value_orig'] = rval
+        if (   cimmethod.qualifiers.has_key('values')
+           and cimmethod.qualifiers.has_key('valuemap')):
+            out['value'] = _displayMappedValue(rval, cimmethod.qualifiers)
+        elif isinstance(out['type'], dict):
+            out['value'] = rval
+        else:
+            out['value'] = _val2str(rval)
+
         return self.render('invoke_method.mako',
                 className    = className,
                 method_name  = method,
                 iname        = iname,
                 in_params    = tmpl_in_params,
                 out_params   = tmpl_out_params,
-                return_value = _val2str(rval))
+                return_value = out)
 
     @view(http_method=POST, require_url=False, require_ns=False,
             returns_response=True)
