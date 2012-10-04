@@ -58,15 +58,15 @@
       args['ns'] = ns
     if 'url' not in args:
       args['url'] = url
-    return "%s REF" % make_href_str('GetClass', args, p['type']['className'])
+    res = "%s REF" % make_href_str('GetClass', args, p['type']['className'])
   else:
-    res = p['type']
+    res = markupsafe.escape(p['type'])
   if isinstance(p, dict) and p['is_array']:
     if 'array_size' in p and p['array_size'] is not None:
       res += ' [%s]' % str(p['array_size'])
     else:
-       res += ' [ ]'
-  return markupsafe.escape(res)
+      res += ' [ ]'
+  return res
 %></%def>\
 
 <%def name="print_data_value(p, whole_path=False)"><%doc>
@@ -75,6 +75,15 @@
     it whole_path is False, then only classname part is printed
   </%doc><%
     if p['value'] is None: return ''
+    if isinstance(p['value'], (tuple, list, set)):
+      pn = dict((k, v) for k, v in p.items()
+                       if  k not in ('is_array', 'value'))
+      pn['is_array'] = False
+      results = []
+      for op in p['value']:
+        pn['value'] = op
+        results.append(print_data_value(pn, whole_path))
+      return "{ " + ", ".join(results) + " }"
     if isinstance(p['type'], dict):
       args = { 'url' : p['type'].get('url', url)
              , 'ns'  : p['type'].get('ns', ns)

@@ -1,3 +1,6 @@
+show associators object paths on ReferenceNames results
+render nice value of 'method returned' on method invication page
+
 make some tests
 python 3 support
 
