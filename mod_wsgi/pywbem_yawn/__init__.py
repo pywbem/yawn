@@ -28,14 +28,14 @@
 # @author Norm Paxton <npaxton@novell.com>
 # @author Michal Minar <miminar@redhat.com>
 
-import logging
-import traceback
 import bisect
+import logging
 import pywbem
 import pywbem.cim_http
 import mako
 import mako.lookup
 import pkg_resources
+import traceback
 from collections import defaultdict
 from itertools import chain
 from werkzeug.wrappers import Response, Request
@@ -51,6 +51,7 @@ from pywbem_yawn import cim_insight
 from pywbem_yawn import inputparse
 from pywbem_yawn import render
 from pywbem_yawn import util
+from pywbem_yawn import views
 from pywbem_yawn.url_convert import (
         IdentifierConverter, Base64Converter, QLangConverter)
 
@@ -65,6 +66,12 @@ assoc_call_labels = [ 'Associators', 'Associator Names'
 
 url_map = Map([
     Rule('/', endpoint='index'),
+    Rule('/json_get_class_list', endpoint="json_get_class_list",
+        methods=["GET"]),
+    Rule('/json_get_class_keys/<id:className>',
+        endpoint="json_get_class_keys", methods=["GET"]),
+    Rule('/json_query_instances',
+        endpoint="json_query_instances", methods=["GET"]),
     Rule('/AssociatedClasses/<id:className>',
         endpoint="AssociatedClasses"),
     Rule('/AssociatorNames/<base64:path>', endpoint="AssociatorNames"),
@@ -204,7 +211,7 @@ class Yawn(object):
 
     def renderer(self, template, **kwargs):
         ks = {
-                'urls' : self.urls,
+                'urls'   : self.urls,
                 'static' : self.static_prefix,
                 'conn'   : getattr(self._local, 'connection', None),
                 'url'    : getattr(self._local, 'url', None),
@@ -262,13 +269,14 @@ class Yawn(object):
 
             for p in cim_insight.get_class_props(
                     klass, inst=inst, include_all=True):
+                if path is not None and p['is_key']:
+                    # do not allow key modification of existing instance
+                    continue
                 value = inputparse.formvalue2cimobject(
-                        p, 'PropName.', params, True)
+                        p, 'propname.', pywbem.NocaseDict(params), True,
+                        namespace=self._local.ns)
                 if p['is_key']:
-                    if path is None:
-                        inst.path[p['name']] = value
-                    else: # do not allow key modification of existing instance
-                        continue
+                    inst.path[p['name']] = value
                 if (  value is None
                    or (isinstance(value, list) and len(value) == 0)):
                     inst.update_existing([(p['name'], None)])
@@ -338,7 +346,7 @@ class Yawn(object):
         resp.data = self.renderer('index.mako').result
         return resp
 
-    @util.view()
+    @views.html_view()
     def on_AssociatedClasses(self, className):
         conn = self.conn
         classNames = None
@@ -405,7 +413,7 @@ class Yawn(object):
             r['associations'] = associations
         return r.result
 
-    @util.view()
+    @views.html_view()
     def on_AssociatorNames(self, path):
         conn = self.conn
         with self.renderer('associator_names.mako',
@@ -430,7 +438,7 @@ class Yawn(object):
             r['instances'] = instances
         return r.result
 
-    @util.view()
+    @views.html_view()
     def on_CMPIProvider(self, className):
         conn = self.conn
         with self.renderer('cmpi_provider.mako', className=className) as r:
@@ -438,11 +446,11 @@ class Yawn(object):
                         IncludeClassOrigin=True, IncludeQualifiers=True)
         return r.result
 
-    @util.view(http_method=util.POST)
+    @views.html_view(http_method=views.POST)
     def on_CreateInstance(self, className, **params):
         return self._createOrModifyInstance(className, None, **params)
 
-    @util.view()
+    @views.html_view()
     def on_CreateInstancePrep(self, className):
         conn = self.conn
         with self.renderer('modify_instance_prep.mako',
@@ -455,14 +463,14 @@ class Yawn(object):
                 util.cmp_params(klass))
         return r.result
 
-    @util.view()
+    @views.html_view()
     def on_DeleteClass(self, className):
         conn = self.conn
         with self.renderer('delete_class.mako', className=className) as r:
             conn.DeleteClass(ClassName = className)
         return r.result
 
-    @util.view()
+    @views.html_view()
     def on_DeleteInstance(self, path):
         conn = self.conn
         with self.renderer('delete_instance.mako',
@@ -471,7 +479,7 @@ class Yawn(object):
             conn.DeleteInstance(path)
         return r.result
 
-    @util.view()
+    @views.html_view()
     def on_EnumClassNames(self, className=None, mode=None, instOnly=None):
         conn = self.conn
         req = self._local.request
@@ -533,7 +541,7 @@ class Yawn(object):
             r['classes'] = classes
         return r.result
 
-    @util.view()
+    @views.html_view()
     def on_EnumInstanceNames(self, className):
         conn = self.conn
         with self.renderer('enum_instance_names.mako',
@@ -553,12 +561,12 @@ class Yawn(object):
                 infos = []
                 for iname in inames:
                     infos.append(cim_insight.get_inst_info(iname, klass,
-                        include_all=True))
+                        include_all=True, keys_only=True))
                 instances.append((cname, iname.namespace, infos))
             r['instances'] = instances
         return r.result
 
-    @util.view()
+    @views.html_view()
     def on_EnumInstances(self, className):
         conn = self.conn
         with self.renderer('enum_instances.mako', className=className) as r:
@@ -579,7 +587,7 @@ class Yawn(object):
                 r['instances'] = instances
         return r.result
 
-    @util.view(require_ns=False)
+    @views.html_view(require_ns=False)
     def on_EnumNamespaces(self):
         conn = self.conn
         nsinsts = []
@@ -631,7 +639,7 @@ class Yawn(object):
                 r['nsd'] = {}
         return r.result
 
-    @util.view(http_method=util.GET_AND_POST)
+    @views.html_view(http_method=views.GET_AND_POST)
     def on_FilteredReferenceNames(self, path,
             assocCall=None, assocClass="",
             resultClass="", role="", resultRole="", properties=""):
@@ -672,26 +680,24 @@ class Yawn(object):
             objs = getattr(conn, funcs[assocCall])(ObjectName=path, **params)
 
             for o in objs:
-                if assocCall in (AC_ASSOCIATORS, AC_REFERENCES):
-                    # o is CIMInstance
-                    klass = conn.GetClass(
-                            ClassName=o.path.classname,
-                            namespace=o.path.namespace,
-                            LocalOnly=False, IncludeQualifiers=True)
-                    results.append(cim_insight.get_inst_info(o, klass))
-                else:
-                    results.append(cim_insight.get_inst_info(o))
+                klass = conn.GetClass(
+                        ClassName=o.path.classname,
+                        namespace=o.path.namespace,
+                        LocalOnly=False, IncludeQualifiers=True)
+                keys_only = not assocCall in (AC_ASSOCIATORS, AC_REFERENCES)
+                results.append(cim_insight.get_inst_info(o, klass,
+                    include_all=True, keys_only=keys_only))
             r['results'] = results
         return r.result
 
-    @util.view()
+    @views.html_view()
     def on_FilteredReferenceNamesDialog(self, path):
         return self.renderer('filtered_reference_names_dialog.mako',
                 path       = path,
                 className  = path.classname,
                 iname      = cim_insight.get_inst_info(path)).result
 
-    @util.view()
+    @views.html_view()
     def on_GetClass(self, className):
         conn = self.conn
         with self.renderer('get_class.mako', className=className) as r:
@@ -719,7 +725,7 @@ class Yawn(object):
             r['items'] = sorted(items, util.cmp_params(klass))
         return r.result
 
-    @util.view(http_method=util.GET_AND_POST)
+    @views.html_view(http_method=views.GET_AND_POST)
     def on_GetInstance(self, className=None, path=None, **params):
         if className is None and path is None:
             raise ValueError("either className or path must be given")
@@ -730,17 +736,42 @@ class Yawn(object):
             klass = conn.GetClass(ClassName=className,
                     LocalOnly=False, IncludeQualifiers=True)
             if path is None:
-                # Remove 'PropName.' prefix from param names.
-                params = dict([(x[9:],y) for (x, y) in params.items()
-                                         if x.startswith('PropName.')])
-                path = pywbem.CIMInstanceName(className,
-                        keybindings=params, namespace=self._local.ns)
+                in_params = {}
 
+                # Remove 'PropName.' prefix from param names.
+
+                log.error('params: {}'.format(params))
+                classes = {className : klass}
+                for prop in cim_insight.get_class_props(klass, keys_only=True):
+                    if isinstance(prop["type"], dict):
+                        if not prop['type']['className'] in classes:
+                            ref_class = conn.GetClass(
+                                        ClassName=prop['type']['className'],
+                                        LocalOnly=False,
+                                        IncludeQualifiers=True)
+                            classes[ref_class.classname] = ref_class
+                        else:
+                            ref_class = classes[prop['type']['className']]
+                        prop['type']['keys'] = pywbem.NocaseDict(dict((p['name'], p)
+                                for p in cim_insight.get_class_props(
+                                    ref_class, keys_only=True)))
+
+                    try:
+                        value = inputparse.formvalue2cimobject(
+                                prop, 'propname.', params,
+                                namespace=self._local.ns)
+                    except inputparse.ReferenceDecodeError as e:
+                        log.error('Invalid argument: %s'%e)
+                        r['invalid_argument'] = str(e)
+                    if value is None: continue
+                    in_params[prop['name']] = value
+                path = pywbem.CIMInstanceName(className,
+                        keybindings=in_params, namespace=self._local.ns)
             inst = conn.GetInstance(InstanceName=path, LocalOnly = False)
             r['instance'] = cim_insight.get_inst_info(inst, klass)
         return r.result
 
-    @util.view()
+    @views.html_view()
     def on_GetInstD(self, className):
         conn = self.conn
         with self.renderer('get_instance_dialog.mako',
@@ -755,7 +786,7 @@ class Yawn(object):
             r['items'] = items
         return r.result
 
-    @util.view(http_method=util.POST)
+    @views.html_view(http_method=views.POST)
     def on_InvokeMethod(self, method, path=None, className=None, **params):
         if path is None and className is None:
             raise ValueError("either object path or className argument must"
@@ -780,9 +811,27 @@ class Yawn(object):
             tmpl_in_params, tmpl_out_params = cim_insight.get_method_params(
                     className, cimmethod)
 
+            classes = {className : klass}
             for p in tmpl_in_params:
-                value = inputparse.formvalue2cimobject(p, 'MethParam.', params)
-                p['value'] = render.val2str(value)
+                if isinstance(p["type"], dict):
+                    if not p['type']['className'] in classes:
+                        ref_class = conn.GetClass(
+                                    ClassName=p['type']['className'],
+                                    LocalOnly=False,
+                                    IncludeQualifiers=True)
+                        classes[ref_class.classname] = ref_class
+                    else:
+                        ref_class = classes[p['type']['className']]
+                    p['type']['keys'] = pywbem.NocaseDict(
+                                dict((p['name'], p)
+                            for p in cim_insight.get_class_props(
+                                ref_class, keys_only=True)))
+                value = inputparse.formvalue2cimobject(p, 'methparam.',
+                        pywbem.NocaseDict(params))
+                if isinstance(p['type'], dict):
+                    p['value'] = value
+                else:
+                    p['value'] = render.val2str(value)
                 if value is not None:
                     in_params[p['name']] = value
             r['in_params'] = tmpl_in_params
@@ -820,7 +869,7 @@ class Yawn(object):
 
         return r.result
 
-    @util.view(http_method=util.POST, require_url=False, require_ns=False,
+    @views.html_view(http_method=views.POST, require_url=False, require_ns=False,
             returns_response=True)
     def on_Login(self, **kwargs):
         try:
@@ -842,18 +891,18 @@ class Yawn(object):
             return self.on_EnumClassNames()
         return self.on_EnumNamespaces()
 
-    @util.view(require_url=False, require_ns=False)
+    @views.html_view(require_url=False, require_ns=False)
     def on_Logout(self):
         # Enable the client to reauthenticate, possibly as a new user
         self.response.set_cookie('yawn_logout', "true",
                 path=util.base_script(self._local.request))
         return self.renderer('logout.mako').result
 
-    @util.view(http_method=util.POST)
+    @views.html_view(http_method=views.POST)
     def on_ModifyInstance(self, path, **params):
         return self._createOrModifyInstance(path.classname, path, **params)
 
-    @util.view(http_method=util.GET_AND_POST)
+    @views.html_view(http_method=views.GET_AND_POST)
     def on_ModifyInstPrep(self, path):
         conn = self.conn
         with self.renderer('modify_instance_prep.mako',
@@ -865,7 +914,7 @@ class Yawn(object):
             r['instance'] = cim_insight.get_inst_info(inst, klass)
         return r.result
 
-    @util.view(require_url=False, require_ns=False)
+    @views.html_view(require_url=False, require_ns=False)
     def on_Pickle(self, path):
         return self.renderer('pickle.mako',
                 className      = path.classname,
@@ -873,7 +922,7 @@ class Yawn(object):
                 compressed_obj = render.encode_reference(path),
                 xml_obj        = path.tocimxml().toprettyxml()).result
 
-    @util.view()
+    @views.html_view()
     def on_PrepMethod(self, method, path=None, className=None):
         if path is None and className is None:
             raise ValueError("either object path or className argument must"
@@ -892,11 +941,11 @@ class Yawn(object):
             r['iname'] = None
             if path is not None:
                 r['iname'] = cim_insight.get_inst_info(path, klass,
-                        include_all=True)
+                        include_all=True, keys_only=True)
             r['return_type'] = cimmethod.return_type
         return r.result
 
-    @util.view()
+    @views.html_view()
     def on_PyProvider(self, className):
         conn = self.conn
         with self.renderer('py_provider.mako', className=className) as r:
@@ -905,7 +954,7 @@ class Yawn(object):
             r['code'], r['mof'] = codegen(klass)
         return r.result
 
-    @util.view(http_method=util.POST)
+    @views.html_view(http_method=views.POST)
     def on_Query(self, query=None, lang=QLangConverter.QLANG_WQL):
         conn = self.conn
         if query is None:
@@ -934,15 +983,15 @@ class Yawn(object):
                 except KeyError:
                     klass = ccache[cn] = conn.GetClass(cn, LocalOnly=False)
                 results.append(cim_insight.get_inst_info(inst, klass,
-                    include_all=True))
+                    include_all=True, keys_only=True))
             r['results'] = results
         return r.result
 
-    @util.view()
+    @views.html_view()
     def on_QueryD(self, className=''):
         return self.renderer('query_dialog.mako', className=className).result
 
-    @util.view()
+    @views.html_view()
     def on_ReferenceNames(self, path):
         """ The goal here is to list InstPaths to all related objects, grouped
         in the
@@ -1008,4 +1057,39 @@ class Yawn(object):
             r['refmap'] = refmap
 
         return r.result
+
+    @views.json_view
+    def on_json_get_class_list(self):
+        klasses = self.conn.EnumerateClassNames(
+                LocalOnly=False, DeepInheritance=True)
+        return sorted(klasses)
+
+    @views.json_view
+    def on_json_get_class_keys(self, className):
+        klass = self.conn.GetClass(ClassName=className,
+                LocalOnly=False,
+                IncludeQualifiers=True)
+        return cim_insight.get_class_props(klass, keys_only=True)
+
+    @views.json_view
+    def on_json_query_instances(self):
+        query = self._local.request.args['query']
+        insts = self.conn.ExecQuery(QueryLanguage='WQL',
+                Query=query, namespace=self._local.ns)
+        self.response.headers["content-type"] = "application/json"
+        result = []
+        klass = None
+        for inst in insts:
+            if klass is None:
+                klass = self.conn.GetClass(ClassName=inst.classname,
+                        IncludeQualifiers=True, LocalOnly=False)
+            item = cim_insight.get_inst_info(inst, klass, keys_only=True)
+            for prop in item["props"]:
+                if (  isinstance(prop['type'], dict)
+                   or prop['type'] == 'reference'):
+                    prop['value'] = str(prop['value'])
+                    prop['value_orig'] = str(prop['value_orig'])
+            item['path'] = str(item['path'])
+            result.append(item)
+        return result
 

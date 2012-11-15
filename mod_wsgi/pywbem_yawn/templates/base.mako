@@ -1,4 +1,5 @@
 ## -*- coding: utf-8 -*-
+<%! from pywbem_yawn.filters import b64enc %>\
 <%namespace name="utils" file="utils.mako" />\
 <%doc>
   template arguments:
@@ -28,7 +29,23 @@
   ${utils.res_css('base')}
 </%def>\
 
-<%def name="scripts()"></%def>\
+<%def name="scripts()">
+<script type="text/javascript">
+  % if url:
+    var url="${url}";
+  % endif
+  % if ns:
+    var ns="${ns}";
+  % endif
+  % if className:
+    var className="${className}";
+  % endif
+  % if conn and conn.creds and len(conn.creds[0]):
+    <% tok = "%s:%s"%conn.creds %>
+    var auth = "Basic ${tok | b64enc}";
+  % endif
+</script>
+</%def>\
 
 <%def name="head()">
   <table id="top_header">

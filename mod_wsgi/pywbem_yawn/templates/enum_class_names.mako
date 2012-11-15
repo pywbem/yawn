@@ -23,7 +23,7 @@
 <%def name="caption()"><h1>${"Classes in '%s/%s'" % (url, ns) | h}</h1></%def>\
 
 <%def name="content()">
-  <% urlargs = {'ns':ns, 'url':url} %>
+<% urlargs = {'ns':ns, 'url':url} %>
   <table class="nav">
     <tr>
       <td class="lineage">
@@ -67,7 +67,7 @@
       </td>
     </tr>
   </table>
-  <hr />
+<hr />
   % if classes:
     <table class="listing">
       <% start_class = 'None' if className is None else className %>

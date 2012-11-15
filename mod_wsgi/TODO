@@ -1,5 +1,16 @@
 show associators object paths on ReferenceNames results
-make nice page for CIM_ERR_NOT_FOUND and CIM_ERR_NOT_SUPPORTED
+make clear, what method is invoked on invoke_method_prep page
+ and show method description
+on user input error, return to dialog page with errors highlighted
+
+examine possible sfcb bugs:
+ - boolean key property does not get sent in reply from broker, when
+   it's a value of reference, that is a value of returned reference:
+     OP with keys:
+      - OP with keys:
+        - boolean property;
+        - ...
+      - ...
 
 make some tests
 python 3 support

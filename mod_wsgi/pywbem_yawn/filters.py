@@ -19,6 +19,7 @@
 Filters used in mako templates. For usage see:
   http://docs.makotemplates.org/en/latest/filtering.html
 """
+import base64
 import markupsafe
 
 def hs(text):
@@ -26,3 +27,5 @@ def hs(text):
         return text
     return markupsafe.escape(text)
 
+def b64enc(text):
+   return base64.urlsafe_b64encode(text)

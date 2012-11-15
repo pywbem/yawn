@@ -29,6 +29,18 @@
   ${parent.stylesheet()}
   ${utils.res_css('instance_names')}
   ${utils.res_css('instance')}
+  ${utils.res_css('ui-lightness/jquery-ui.min')}
+  ${utils.res_css('ref_input')}
+</%def>
+<%def name="scripts()">
+  ${parent.scripts()}
+  % if not cim_error:
+    ${utils.js_input_params(in_params, prefix='methparam.')}
+    ${utils.res_js('jquery.min')}
+    ${utils.res_js('jquery-ui.min')}
+    ${utils.res_js('ref_input')}
+    ${utils.res_js('params')}
+  % endif
 </%def>
 <%def name="caption()">
   <% args = {'ns':ns, 'url':url, 'className': className} %>
@@ -42,7 +54,7 @@
     % if iname is not None:
       ${utils.show_instance_names([iname])}
     % endif
-    ${utils.show_input_params(in_params)}
+    ${utils.show_input_params(in_params, prefix='methparam.')}
     ${utils.show_output_params(out_params)}
     <h3 class="return_type">
       Method return type: ${utils.print_data_type(return_type)}

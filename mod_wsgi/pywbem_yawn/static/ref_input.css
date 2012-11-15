@@ -1,0 +1,25 @@
+tr.even { background-color: white; }
+tr.odd { background-color: #a0a0a0; }
+tr.selected { background-color: #FFF491; }
+#reference-selector table { vertical-align: top; }
+#reference-selector td { vertical-align: top; }
+#reference-selector tr {
+    height: 20px;
+    max-height: 20px;
+}
+input.compressed, input.raw {
+    min-width: 400px;
+}
+span.broker-error, span.ajax-error {
+    color: red;
+}
+span.query-failed {
+    font-weight: bold;
+}
+.container:not(.default) {
+    display: inline;
+}
+td.select-to-remove {
+    background-color: #FF9A9A;
+}
+/*#reference-selector .stretch { */

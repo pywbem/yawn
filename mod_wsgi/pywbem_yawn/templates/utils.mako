@@ -5,7 +5,7 @@
 
 <%def name="make_href_str(func, kwargs={}, target=None, append='', classes=[])"><%
   if target is None:
-    target = func 
+    target = func
   if not getattr(target, 'safe', False):
     target = markupsafe.escape(target)
   linkargs = {'href':urls.build(func, kwargs) + append}
@@ -128,7 +128,7 @@
   return css
 %></%def>
 
-<%def name="make_elem(name, css, description=None)"><%
+<%def name="make_elem(elem_name, css, description=None, **kwargs)"><%
   args = []
   if not isinstance(css, basestring):
     if len(css): css = ' '.join(css)
@@ -136,9 +136,11 @@
     args.append('class="%s"' % css)
   if description is not None:
     args.append('title="%s"' % markupsafe.escape(description))
+  for k, v in kwargs.items():
+    args.append('%s="%s"' % (k, v))
   argsstr = ""
   if len(args): argsstr = " " + " ".join(args)
-  return "<%s%s>"%(name, argsstr)
+  return "<%s%s>"%(elem_name, argsstr)
 %></%def>\
 
 <%def name="show_instance(inst)">
@@ -321,7 +323,10 @@
       if submit is None:
         submit = "Invoke Method"
       if prefix is None:
-        prefix = "MethParam."
+        prefix = "methparam."
+      prefix = prefix.lower()
+    elif prefix is None:
+        prefix = ''
     if caption is None:
       caption = (  'With Input Parameters'
                 if read_only else 'Enter Input Parameters')
@@ -337,16 +342,49 @@
       <tr class="headers">
         <th class="data_type">Data Type</th>
         <th class="param_name">Param Name</th>
-        <th class="value">Value</th>
+        <th colspan="${2 if not read_only else 1}" class="value">Value</th>
       </tr>
       % for p in params:
-        ${make_elem('tr', make_param_css(p), p['description'])}
-          <td class="data_type">${print_data_type(p)}</td>
-          <td class="param_name">
+        <%
+          prop_name = p['name'].lower()
+          rowspan = 1
+          if not read_only and p['is_array'] and not p['is_valuemap']:
+            if p['array_size'] is not None:
+              ## fixed size array (no Add or Remove)
+              rowspan = p['array_size']
+            else:
+              if isinstance(p['value_orig'], list):
+                rowspan = len(p['value_orig'])
+              else:
+                rowspan = 0
+              ## for Add button
+              rowspan += 1
+        %>
+        ${make_elem('tr', make_param_css(p), p['description'],
+            id="param-"+prefix+prop_name+"-row-1")}
+          <td id="${'param_type-'+prefix+prop_name}"
+              rowspan="${rowspan}" class="data_type">${print_data_type(p)}</td>
+          <td id="${'param_name-'+prefix+prop_name}"
+              rowspan="${rowspan}" class="param_name">
             <% cargs = {'url':url, 'ns':ns, 'className':className } %>
-            ${make_href('GetClass', cargs, p['name'], '#'+p['name'].lower())}
+            ${make_href('GetClass', cargs, p['name'], '#'+prop_name)}
           </td>
-          <td class="value">
+          <%
+            colspan = 1
+            if (   not read_only
+               and (  not p['is_array']
+                   or p['array_size'] is not None
+                   or p['is_valuemap']
+                   or (   isinstance(p['value_orig'], list)
+                      and not len(p['value_orig']))
+                   or not p['value'])):
+              colspan = 2
+            css = ["value"]
+            if p['is_array'] and not read_only:
+              css.append("array_item")
+          %>
+          ${make_elem('td', css, colspan=colspan,
+            id='param_value-'+prefix+prop_name)}
             % if read_only or (new is False and p['is_key']):
               ${print_data_value(p)}
             % else:
@@ -393,14 +431,49 @@
   % endif
 </%def>\
 
-<%def name="param_valmap_values(p, value)"><% 
+<%def name="param_valmap_values(p, value)"><%
   if not p['values'][value]: return ""
   %>${"(%s)"%', '.join(p['values'][value]) | hs}
 </%def>\
 
+<%def name="make_input_no_array(p, prefix='', suffix='', css=[])">
+  <%
+    paramname = prefix + p['name'].lower() + suffix
+    css_str=""
+    if len(css):
+      css_str = 'class="%s"' % (" ".join(css))
+  %>
+  % if p['is_valuemap']:
+    <select ${css_str} id="${paramname | h}" name="${paramname | h}">
+      <option value=""></option>
+    % for v in p['valuemap']:
+      <% selected = p['value_orig'] is not None and str(p['value_orig']) == v %>
+      <option value="${v | h}"${' selected="selected"' if selected else ''}>
+        ${v | hs} ${param_valmap_values(p, v)}
+      </option>
+    % endfor
+    </select>
+  % elif p['type'] == "boolean":
+    <select ${css_str} id="${paramname | h}" name="${paramname | h}">
+    % for v in ("", True, False):
+      <% selected = p['value_orig'] is not None and bool(p['value_orig']) == v %>
+      <option value="${v | h}"${' selected="selected"' if selected else ''}>${v | hs}</option>
+    % endfor
+    </select>
+  % else:
+    <%
+      kwargs = { "id":paramname, "type":"text", "name":paramname }
+      if (   p['value_orig'] is not None
+         and (not isinstance(p['value_orig'], list) or len(p['value_orig']))):
+        kwargs['value'] = p['value_orig']
+    %>
+    ${make_elem('input', css, **kwargs)}
+  % endif
+</%def> \
+
 <%def name="make_input(p, prefix='')">
   ## prefix is used for name collision avoidance
-  <% paramname = prefix + p['name'] %>
+  <% paramname = prefix + p['name'].lower() %>
   % if p['is_valuemap']:
     % if p['is_array']:
       <table class="valuemap">
@@ -420,49 +493,89 @@
       % endfor
       </table>
     % else:
-      <select name="${paramname | h}">
-        <option value=""></option>
-      % for v in p['valuemap']:
-        <% selected = p['value_orig'] is not None and str(p['value_orig']) == v %>
-        <option value="${v | h}"${' selected="selected"' if selected else ''}>
-          ${v | hs} ${param_valmap_values(p, v)}
-        </option>
-      % endfor
-      </select>
+      ${make_input_no_array(p, prefix)}
     % endif
-  % elif p['type'] == 'boolean':
-    <select name="${paramname | h}">
-    % for v in ("", True, False):
-      <% selected = p['value_orig'] is not None and bool(p['value_orig']) == v %>
-      <option value="${v | h}"${' selected="selected"' if selected else ''}>${v | hs}</option>
-    % endfor
-    </select>
-  % else:
-    % if p['is_array']:
-      <% 
+  % elif p['is_array']:
+    <%
       if p['array_size'] is not None:
         size = p['array_size']
       elif isinstance(p['value_orig'], list):
         size = len(p['value_orig'])
       else:
         size = 0
+    %>
+    % for i in range(size):
+      <%
+        pnew = p.copy()
+        pnew["value_orig"] = p['value_orig'][i] if i < size else ''
       %>
-      % for i in range(size):
-        <input type="text" name="${paramname | h}-${i}"
-        ${'value="%s"'%p['value_orig'][i] if i < size else ''} />
-        % if p['array_size'] is None:
-          <a href="javascript://">-</a>
-        % endif
-        <br />
-      % endfor
+      ${make_input_no_array(pnew, prefix, '-'+str(i))}
       % if p['array_size'] is None:
-        <input type="button" id="${paramname}_add" value="Add" /> 
+        </td>${make_elem('td', ['remove'])}
+        <a title="Remove this item" class="remove" href="javascript://">X</a></td></tr>
+        ${make_elem('tr', make_param_css(p), id="param-"+paramname+"-row-"+str(i+2))}
+        ${make_elem('td', ["array_item"], colspan=2 if i >= (size - 1) else 1)}
+      % else:
+        </td><td colspan="2"/>
       % endif
-      <input type="hidden" id="${paramname}.size" name="${paramname | h}.size" value="${size}" />
-    % else:
-      <input type="text" name="${paramname | h}"
-      ${'value="%s"'%markupsafe.escape(p['value_orig']) if p['value_orig'] is not None else ''}/>
+    % endfor
+    <input type="hidden" id="${paramname | h}.size"
+           name="${paramname | h}.size" value="${size}" />
+    % if p['array_size'] is None:
+      <input type="button" id="${paramname}_add" value="Add" />
+      <% pnew = p.copy(); pnew['value_orig'] = None %>
+      ${make_input_no_array(pnew, prefix, '-default', ["hidden", "default"])}
     % endif
+  % else:
+    ${make_input_no_array(p, prefix)}
   % endif
+</%def>\
+
+<%def name="js_input_params(params, prefix='')">
+<script type="text/javascript">
+  var input_param_details = {
+    % for p in params:
+      <%
+        if isinstance(p['type'], dict):
+          type_str = str(dict((str(k), str(v)) for k, v in p['type'].items()))
+        else:
+          type_str = str(p['type']).lower()
+          if type_str == 'boolean':
+            type_str = 'bool'
+          type_str = '"%s"'%type_str
+        values = []
+        for k, v in p['values'].items():
+          values.append('"%s":"%s"'%(
+              markupsafe.escape(k), markupsafe.escape(v[0]) if v else ""))
+        values = "{%s}"%", ".join(values)
+        if p['value'] is None:
+          value = 'null'
+        else:
+          value = '"%s"'%markupsafe.escape(p['value'])
+        if p['value_orig'] is None:
+          value_orig = 'null'
+        else:
+          if isinstance(p['value_orig'], list):
+            value_orig = [(v.encode('utf-8') if isinstance(v, unicode) else str(v)) for v in p['value_orig']]
+          else:
+            value_orig = p['value_orig']
+            if isinstance('value_orig', unicode):
+              value_orig = value_orig.encode('utf-8')
+          value_orig = '"%s"'%markupsafe.escape(p['value_orig'])
+      %>
+      "${prefix.lower()}${p['name'].lower()}" : {
+        'name'       : "${prefix.lower()}${str(p['name'].lower())}",
+        'valuemap'   : ${[str(v) for v in p['valuemap']]},
+        'values'     : ${values},
+        'is_array'   : ${'true' if p['is_array'] else 'false'},
+        'is_valuemap': ${'true' if p['is_valuemap'] else 'false'},
+        'array_size' : ${'null' if p['array_size'] is None else p['array_size']},
+        'type'       : ${type_str},
+        'value'      : ${value},
+        'value_orig' : ${value_orig}
+      },
+    % endfor
+  };
+</script>
 </%def>\
 ## ex:et:sw=2:ts=2

@@ -37,10 +37,46 @@ def get_all_hierarchy(conn, url, ns, className):
             classNameToCheck = None
     return hierarchy
 
+def _get_prop_value(prop, inst=None):
+    if isinstance(prop, pywbem.CIMParameter):
+        return prop.value
+    if inst is not None:
+        if isinstance(inst, pywbem.CIMInstance):
+            if prop.name in inst.properties:
+                return inst.properties[prop.name].value
+        else:
+            if prop.name in inst:
+                return inst[prop.name]
+    if prop.value is not None:
+        return prop.value
+    return None
+
+def _get_prop_type(prop, inst=None):
+    value = _get_prop_value(prop, inst)
+    t = '<UNKNOWN>'
+    if (   prop.reference_class is None
+       and (  prop.type != 'reference'
+           or not isinstance(value, pywbem.CIMInstanceName))):
+        t = prop.type
+    else:
+        t = {'className' : None }
+        if prop.reference_class is not None:
+            t['className'] = prop.reference_class
+        else:
+            if isinstance(value, list):
+                value = value[0] if len(value) else None
+            if isinstance(value, pywbem.CIMInstanceName):
+                t['className'] = value.classname
+                t['ns'] = value.namespace
+    return t
+
 def _get_property_details(prop, inst=None):
     """
     This should be used only by functions get_class_item_details
     and get_class_props
+
+    @param prop is either CIMProperty or CIMParameter
+    @param inst is either CIMInstance or CIMInstanceName
     """
     if not isinstance(prop, (pywbem.CIMProperty, pywbem.CIMParameter)):
         raise TypeError('prop must be either CIMProperty or CIMParameter')
@@ -49,13 +85,7 @@ def _get_property_details(prop, inst=None):
        and not isinstance(inst, pywbem.CIMInstanceName)):
         raise TypeError('inst must be one of: CIMInstance,'
                ' CIMInstanceName, None')
-    if inst is not None:
-        if isinstance(inst, pywbem.CIMInstance):
-            _has_prop  = lambda name: name in inst.properties
-            _get_value = lambda name: inst.properties[name].value
-        else: # CIMInstanceName
-            _has_prop  = lambda name: name in inst
-            _get_value = lambda name: inst[name]
+    value = _get_prop_value(prop, inst)
 
     i = { 'valuemap'     : []
         # string represantations of values in valuemap
@@ -65,23 +95,17 @@ def _get_property_details(prop, inst=None):
     if prop.is_array:
         i['is_array'] = prop.is_array
         i['array_size'] = prop.array_size
-    if prop.reference_class is None:
-        i['type'] = prop.type
-    else:
-        i['type'] = {'className':prop.reference_class}
-        if inst is not None and _has_prop(prop.name):
-            i['type']['ns'] = _get_value(prop.name).namespace
+    i['type'] = _get_prop_type(prop, inst)
 
-    if inst is not None and _has_prop(prop.name):
-        i['value_orig'] = _get_value(prop.name)
+    i['value_orig'] = value
+    if value is not None:
         if (   prop.qualifiers.has_key('values')
            and prop.qualifiers.has_key('valuemap')):
-            i['value'] = render.mapped_value2str(
-                    _get_value(prop.name), prop.qualifiers)
+            i['value'] = render.mapped_value2str(value, prop.qualifiers)
         elif prop.reference_class is not None:
-            i['value'] = _get_value(prop.name)
+            i['value'] = value
         else:
-            i['value'] = render.val2str(_get_value(prop.name))
+            i['value'] = render.val2str(value)
 
     if prop.qualifiers.has_key('valuemap'):
         i['is_valuemap'] = True
@@ -170,7 +194,7 @@ def get_class_item_details(className, item, inst=None):
             args.append(get_class_item_details(className, p))
     return i
 
-def get_class_props(klass=None, inst=None, include_all=False):
+def get_class_props(klass=None, inst=None, include_all=False, keys_only=False):
     """
     @param inst may be CIMInstance
         if given and include_all == False, then only properties
@@ -178,6 +202,7 @@ def get_class_props(klass=None, inst=None, include_all=False):
         if None, then all properties declared by klass will be returned
     @param include_all if True, then all properties declared by klass
         and all defined by given instance will be returned
+    @param keys_only if True, then only key properties are returned
     @note properties declared by klass != propertied defined be instance,
         that's why include_all flag is provided
     @note qualifiers declared be class override those provided by instance
@@ -222,8 +247,14 @@ def get_class_props(klass=None, inst=None, include_all=False):
         if (  isinstance(inst, pywbem.CIMInstance)
            and prop_name in inst.properties):
             iprop = inst.properties[prop_name]
+            if (  keys_only
+               and not iprop.qualifiers.has_key('key')
+               and not prop_name in inst.path):
+                continue
         cprop = (  klass.properties[prop_name]
                 if klass and klass.properties.has_key(prop_name) else None)
+        if keys_only and cprop and not cprop.qualifiers.has_key('key'):
+            continue
         p = { 'name'        : prop_name
             , 'is_key'      : False
             , 'is_required' : False
@@ -265,7 +296,7 @@ def get_class_methods(klass):
         methods.append((method.name, method.parameters.keys()))
     return methods
 
-def get_inst_info(inst, klass=None, include_all=False):
+def get_inst_info(inst, klass=None, include_all=False, keys_only=False):
     """
     @return { 'className'  : className
             , 'ns'         : namespace
@@ -279,7 +310,8 @@ def get_inst_info(inst, klass=None, include_all=False):
     info = { 'className' : pth.classname
            , 'ns'        : pth.namespace
            , 'host'      : pth.host
-           , 'props'     : get_class_props(klass, inst, include_all)
+           , 'props'     : get_class_props(klass, inst,
+               include_all=include_all, keys_only=keys_only)
            , 'path'      : pth
            , 'methods'   : []
            }

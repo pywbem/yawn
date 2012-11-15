@@ -7,7 +7,7 @@ setup(
         packages = find_packages(),
         package_data = { 'pywbem_yawn' :
             ['templates/*.mako', 'templates/*.txt'
-            , 'static/*.css', 'static/*.js'] },
+            , 'static/*.css', 'static/*.js', 'static/ui-lightness'] },
         scripts = ['scripts/yawn.py'],
         author = "Michal Minar",
         author_email = "miminar@redhat.com",
