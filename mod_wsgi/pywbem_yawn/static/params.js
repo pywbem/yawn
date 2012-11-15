@@ -125,6 +125,22 @@
                     $new_def_inp.focus();
             });
         });
+
+        var send_null_changed = function(checkbox) {
+            if (checkbox.prop('checked')) {
+                checkbox.nextAll().addClass('hidden');
+                checkbox.after($('<span>Null</span>').addClass('null_val'));
+            }else {
+                checkbox.next('span.null_val').remove();
+                checkbox.nextAll().removeClass('hidden');
+            }
+        }
+
+        $('input[type="checkbox"].null').change(function() {
+            send_null_changed($(this));
+        }).each(function() {
+            send_null_changed($(this));
+        });
     });
 })(jQuery);
 // ex:et:ts=4:sw=4

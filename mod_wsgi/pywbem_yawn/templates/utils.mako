@@ -128,7 +128,7 @@
   return css
 %></%def>
 
-<%def name="make_elem(elem_name, css, description=None, **kwargs)"><%
+<%def name="make_elem(elem_name, css, description=None, terminated=False, **kwargs)"><%
   args = []
   if not isinstance(css, basestring):
     if len(css): css = ' '.join(css)
@@ -140,7 +140,7 @@
     args.append('%s="%s"' % (k, v))
   argsstr = ""
   if len(args): argsstr = " " + " ".join(args)
-  return "<%s%s>"%(elem_name, argsstr)
+  return "<%s%s%s>"%(elem_name, argsstr, '/' if terminated else '')
 %></%def>\
 
 <%def name="show_instance(inst)">
@@ -462,11 +462,23 @@
     </select>
   % else:
     <%
-      kwargs = { "id":paramname, "type":"text", "name":paramname }
+      kwargs = { "id":paramname, "type":"text", "name":paramname,
+          "terminated":True}
       if (   p['value_orig'] is not None
          and (not isinstance(p['value_orig'], list) or len(p['value_orig']))):
         kwargs['value'] = p['value_orig']
+      null_kwargs = False
+      if (   not p['is_required'] and not p['is_key'] and not p['is_array']
+         and (p['type'] == 'string' or isinstance(p['type'], dict))):
+        null_kwargs = { "type":"checkbox", "checked":"checked",
+           "terminated" : True}
+        null_kwargs['name'] = null_kwargs['id'] = (
+            prefix + p['name'].lower() + '-null' + suffix)
+        null_kwargs['title'] = "NULL - Do not send this value."
     %>
+    % if null_kwargs:
+      ${make_elem('input', css + ['null'], **null_kwargs)}
+    % endif
     ${make_elem('input', css, **kwargs)}
   % endif
 </%def> \

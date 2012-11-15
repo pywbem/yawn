@@ -16,7 +16,7 @@ span.broker-error, span.ajax-error {
 span.query-failed {
     font-weight: bold;
 }
-.container:not(.default) {
+.container:not(.default):not(.hidden) {
     display: inline;
 }
 td.select-to-remove {

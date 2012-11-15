@@ -285,11 +285,14 @@ def formvalue2cimobject(param, prefix, formdata, pop_used=False,
                 else:
                     o = process_simple_value(value(param_name + '-' + str(i)))
                 result.append(o)
-    elif isinstance(param['type'], dict):
-        result = formvalue2iname(param, prefix, formdata, pop_used=pop_used,
-                namespace=namespace)
     else:
-        result = process_simple_value(value(param_name))
+        if prefix + param_name + '-null' in formdata:
+            return None
+        if isinstance(param['type'], dict):
+            result = formvalue2iname(param, prefix, formdata,
+                    pop_used=pop_used, namespace=namespace)
+        else:
+            result = process_simple_value(value(param_name))
 
     return result
 
