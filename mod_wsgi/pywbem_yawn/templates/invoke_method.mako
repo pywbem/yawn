@@ -24,17 +24,25 @@
   </h1>
 </%def>
 <%def name="content()">
-  ${utils.show_input_params(in_params, read_only=True)}
-  ${utils.show_output_params(out_params, with_values=True)}
-  <div id="results">
-    <span class="caption">Method returned:</span>
-    <span class="value">${utils.print_data_value(return_value, True)}</span>
-  </div>
+  % if in_params:
+    ${utils.show_input_params(in_params, read_only=True)}
+  % endif
+  % if cim_error:
+    ${self.print_cim_error("Failed to invoke method!")}
+  % else:
+    % if out_params:
+      ${utils.show_output_params(out_params, with_values=True)}
+    % endif
+    <div id="results">
+      <span class="caption">Method returned:</span>
+      <span class="value">${utils.print_data_value(return_value, True)}</span>
+    </div>
+  % endif
   <div class="nav">
     <% args = {'ns':ns, 'url':url, 'className':className} %>
     Return to class ${utils.make_href('GetClass', args, className)}
   </div>
-  % if iname is not None:
+  % if iname:
     ${utils.show_instance_names([iname])}
   % endif
 </%def>

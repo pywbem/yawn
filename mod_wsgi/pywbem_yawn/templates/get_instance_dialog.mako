@@ -3,13 +3,13 @@
 <%doc>
   template arguments:
   * className
-	* items: list of key property dictionaries
+  * items: list of key property dictionaries
 </%doc>
 <%def name="subtitle()" filter="trim">
   Get Instance of ${className}
 </%def>
 <%def name="stylesheet()">
-	${parent.stylesheet()}
+  ${parent.stylesheet()}
   ${utils.res_css('instance')}
 </%def>
 <%def name="caption()">
@@ -18,9 +18,13 @@
     ${utils.make_href('GetClass', args, className)}</h1>
 </%def>
 <%def name="content()">
-	<% action = urls.build('GetInstance', {'className':className, }) %>
-	<div class="get">
-    ${utils.show_input_params(items, action=action, read_only=False, caption=False, submit='Get Instance', prefix='PropName.')}
-	</div>
+  % if cim_err:
+    ${self.print_cim_error("Failed to get class details!")}
+  % else:
+    <% action = urls.build('GetInstance', {'className':className, }) %>
+    <div class="get">
+      ${utils.show_input_params(items, action=action, read_only=False, caption=False, submit='Get Instance', prefix='PropName.')}
+    </div>
+  % endif
 </%def>
 ## ex:et:sw=2:ts=2

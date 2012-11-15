@@ -18,10 +18,14 @@
 <%def name="subtitle()">${"Classes in '%s'" % ns | h}</%def>
 <%def name="caption()"><h1>${"Classes in '%s/%s'" % (url, ns) | h}</h1></%def>
 <%def name="content()">
-  <% urlargs = {'ns':ns, 'url':url} %>
-  <table class="listing">
-    <% start_class = 'None' if className is None else className %>
-    ${utils.enum_classes(start_class)}
-  </table>
+  % if cim_error:
+    ${self.print_cim_error("Failed to enumerate instrumented class names!")}
+  % else:
+    <% urlargs = {'ns':ns, 'url':url} %>
+    <table class="listing">
+      <% start_class = 'None' if className is None else className %>
+      ${utils.enum_classes(start_class)}
+    </table>
+  % endif
 </%def>
 ## ex:et:ts=2:sw=2

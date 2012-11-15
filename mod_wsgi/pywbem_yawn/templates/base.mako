@@ -57,4 +57,15 @@
     <h1>${heading}</h1>
   % endif
 </%def>\
+
+<%def name="print_cim_error(what)">
+  <table id="cim_error" class="${cim_error.lower()}" >
+    <tr class="title"><th colspan="2">Broker error</th></tr>
+    <tr class="headers">
+      <th>Error Code</th><th>Error Description</th>
+    </tr>
+    <tr><td id="cim_error_type">${cim_error}</td>
+        <td id="cim_error_msg"><pre>${cim_error_msg | h}</pre></td></tr>
+  </table>
+</%def> \
 ## ex:et:ts=2:sw=2

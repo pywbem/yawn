@@ -36,13 +36,17 @@
     on ${'Instance' if iname is not None else 'Class'}</h1>
 </%def>
 <%def name="content()">
-  % if iname is not None:
-    ${utils.show_instance_names([iname])}
+  % if cim_error:
+    ${self.print_cim_error("Failed to get class details!")}
+  % else:
+    % if iname is not None:
+      ${utils.show_instance_names([iname])}
+    % endif
+    ${utils.show_input_params(in_params)}
+    ${utils.show_output_params(out_params)}
+    <h3 class="return_type">
+      Method return type: ${utils.print_data_type(return_type)}
+    </h3>
   % endif
-  ${utils.show_input_params(in_params)}
-  ${utils.show_output_params(out_params)}
-  <h3 class="return_type">
-    Method return type: ${utils.print_data_type(return_type)}
-  </h3>
 </%def>
 ## ex:et:sw=2:ts=2

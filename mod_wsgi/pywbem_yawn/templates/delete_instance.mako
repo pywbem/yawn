@@ -18,7 +18,12 @@
     </h1>
 </%def>
 <%def name="content()">
-  ${utils.show_instance_names([iname], with_get_link=False)}
+  % if iname:
+    ${utils.show_instance_names([iname], with_get_link=False)}
+  % endif
+  % if cim_error:
+    ${self.print_cim_error("Failed to delete instance!")}
+  % endif
 </%def>
 ## ex:et:ts=2:sw=2
 

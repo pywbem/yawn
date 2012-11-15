@@ -41,17 +41,21 @@
       ${pname}="${pval | h}"${', ' if i < len(params) - 1 else ''}
     % endfor
   )</span>
-  <div id="stats">Showing ${len(results)} resulting
-    object${'s' if len(results) != 1 else ''}.</div><br />
+  % if cim_error:
+    ${self.print_cim_error("Failed to get %s!" % assoc_call_label)}
+  % else:
+    <div id="stats">Showing ${len(results)} resulting
+      object${'s' if len(results) != 1 else ''}.</div><br />
 
-  % for res in results:
-    <hr />
-    <% cargs = { 'ns':ns, 'url': url, 'className':className } %>
-    <h2>Objects of Class ${utils.make_href('GetClass', cargs, res['className'])}</h2>
-    ${utils.show_instance_names([res])}
-    % if assoc_call in ('associators', 'references'):
-      ${utils.show_instance(res)}
-    % endif
-  % endfor
+    % for res in results:
+      <hr />
+      <% cargs = { 'ns':ns, 'url': url, 'className':className } %>
+      <h2>Objects of Class ${utils.make_href('GetClass', cargs, res['className'])}</h2>
+      ${utils.show_instance_names([res])}
+      % if assoc_call in ('associators', 'references'):
+        ${utils.show_instance(res)}
+      % endif
+    % endfor
+  % endif
 </%def>
 ## ex:et:ts=2:sw=2

@@ -12,10 +12,14 @@
 </%def>
 <%def name="caption()"></%def>
 <%def name="content()">
-  <% args = {'ns':ns, 'url':url } %>
+  % if cim_error:
+    ${self.print_cim_error("Failed to get associator names!")}
+  % else:
+    <% args = {'ns':ns, 'url':url } %>
     % for cname, namespace, inames in instances:
       <h2 class="className">${cname}</h2>
       ${utils.show_instance_names(inames, True)}
     % endfor
+  % endif
 </%def>
 ## ex:et:ts=2:sw=2

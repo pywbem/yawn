@@ -26,15 +26,19 @@
     </tr>
   </table>
   <p>
-  % if len(results) == 0:
-    No Instances
-  % else:
-    Showing ${len(results)} Instance${'s' if len(results) > 1 else ''}
+  % if cim_error:
+    ${self.print_cim_error("Failed to get results for query!")}
+  %else:
+    % if len(results) == 0:
+      No Instances
+    % else:
+      Showing ${len(results)} Instance${'s' if len(results) > 1 else ''}
+    % endif
+    </p>
+    <hr />
+    % for res in results:
+      ${utils.show_instance(res)}
+    % endfor
   % endif
-  </p>
-  <hr />
-  % for res in results:
-    ${utils.show_instance(res)}
-  % endfor
 </%def>
 ## ex:et:sw=2:ts=2

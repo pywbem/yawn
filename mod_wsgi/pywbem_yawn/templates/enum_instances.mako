@@ -12,16 +12,20 @@
 </%def>
 <%def name="caption()"><h1>Instances of ${className}</h1></%def>
 <%def name="content()">
-  <div class="stats">
-  % if len(instances) == 0:
-    No Instances
-  % elif len(instances) > 1:
-    Showing ${len(instances)} Instances
+  % if cim_error:
+    ${self.print_cim_error("Failed to enumerate instances!")}
+  % else:
+    <div class="stats">
+    % if len(instances) == 0:
+      No Instances
+    % elif len(instances) > 1:
+      Showing ${len(instances)} Instances
+    % endif
+    </div>
+    <hr />
+    % for inst in instances:
+      ${utils.show_instance(inst)}
+    % endfor
   % endif
-  </div>
-  <hr />
-  % for inst in instances:
-    ${utils.show_instance(inst)}
-  % endfor
 </%def>
 ## ex:et:ts=2:sw=2

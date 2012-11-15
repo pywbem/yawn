@@ -40,69 +40,73 @@
 </%def>
 <%def name="caption()"><h1>Class ${className}</h1></%def>
 <%def name="content()">
-  <%
-    args  = {'url':url, 'ns':ns}
-    cargs = args.copy();
-    cargs['className'] = className
-  %>
-  <table>
-    <tr>
-      <td>
-        <div class="nav">
-          ${utils.make_href('DeleteClass', cargs, 'Delete Class')},
-          ${utils.make_href('GetInstD', cargs, 'Get Instance')},
-          ${utils.make_href('CreateInstancePrep', cargs, 'Create Instance')}
-          or view ${utils.make_href("EnumInstanceNames", cargs, 'Instance Names')}
-          or ${utils.make_href('EnumInstances', cargs, 'Instances')}
-          or ${utils.make_href('AssociatedClasses', cargs, 'AssociatedClasses')}
-          of this class.
-          ${utils.make_href('PyProvider', cargs, 'Python Provider')}
-          ${utils.make_href('CMPIProvider', cargs, 'CMPI Provider')}
-        </div>
-        <table class="details">
-          <%
-            css = set(('class_header', ))
-            if aggregation:
-              css.add('aggregation')
-            if association:
-              css.add('association')
-          %>
-          ${utils.make_elem('tr', css)}
-            <td class="name"><a id="${className}"></a>${className}</td>
-            <td class="parent">
-              % if super_class:
-                <% sargs = args.copy(); sargs['className'] = super_class %>
-                Superclass: ${utils.make_href('GetClass', sargs, super_class)}
-              % endif
-            </td>
-          </tr>
-          % if description:
-            <tr class="description">
-              <td colspan="2">${description | hs}</td>
+  % if cim_error:
+    ${self.print_cim_error("Failed to get class!")}
+  % else:
+    <%
+      args  = {'url':url, 'ns':ns}
+      cargs = args.copy();
+      cargs['className'] = className
+    %>
+    <table>
+      <tr>
+        <td>
+          <div class="nav">
+            ${utils.make_href('DeleteClass', cargs, 'Delete Class')},
+            ${utils.make_href('GetInstD', cargs, 'Get Instance')},
+            ${utils.make_href('CreateInstancePrep', cargs, 'Create Instance')}
+            or view ${utils.make_href("EnumInstanceNames", cargs, 'Instance Names')}
+            or ${utils.make_href('EnumInstances', cargs, 'Instances')}
+            or ${utils.make_href('AssociatedClasses', cargs, 'AssociatedClasses')}
+            of this class.
+            ${utils.make_href('PyProvider', cargs, 'Python Provider')}
+            ${utils.make_href('CMPIProvider', cargs, 'CMPI Provider')}
+          </div>
+          <table class="details">
+            <%
+              css = set(('class_header', ))
+              if aggregation:
+                css.add('aggregation')
+              if association:
+                css.add('association')
+            %>
+            ${utils.make_elem('tr', css)}
+              <td class="name"><a id="${className}"></a>${className}</td>
+              <td class="parent">
+                % if super_class:
+                  <% sargs = args.copy(); sargs['className'] = super_class %>
+                  Superclass: ${utils.make_href('GetClass', sargs, super_class)}
+                % endif
+              </td>
             </tr>
-          % endif
-          <tr class="qualifiers"><td colspan="2">
-            <span class="caption">Qualifiers:</span>
-            <% qfirst = True %>
-            % for i, (qn, qv) in enumerate(qualifiers):
-              % if qn not in ('Composition', 'Association', 'Aggregation'):
-                ${', ' if not qfirst else ''}${qn}(${'"%s"'%qv | hs})
-                <% qfirst = False %>
-              % endif
-            % endfor
-          </td></tr>
-          <tr class="params_header">
-            <td colspan="2">Parameters (local in grey)</td>
-          </tr>
-          <tr>
-            <td colspan="2">
-              ${self.params()}
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
+            % if description:
+              <tr class="description">
+                <td colspan="2">${description | hs}</td>
+              </tr>
+            % endif
+            <tr class="qualifiers"><td colspan="2">
+              <span class="caption">Qualifiers:</span>
+              <% qfirst = True %>
+              % for i, (qn, qv) in enumerate(qualifiers):
+                % if qn not in ('Composition', 'Association', 'Aggregation'):
+                  ${', ' if not qfirst else ''}${qn}(${'"%s"'%qv | hs})
+                  <% qfirst = False %>
+                % endif
+              % endfor
+            </td></tr>
+            <tr class="params_header">
+              <td colspan="2">Parameters (local in grey)</td>
+            </tr>
+            <tr>
+              <td colspan="2">
+                ${self.params()}
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  % endif
 </%def>\
 
 <%def name="params()">

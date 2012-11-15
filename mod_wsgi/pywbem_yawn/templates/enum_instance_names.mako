@@ -11,19 +11,28 @@
   ${utils.res_css('instance_names')}
 </%def>
 <%def name="caption()">
-  <% cnt = sum(len(i[2]) for i in instances) %>
+  <%
+    if cim_error:
+      cnt = 0
+    else:
+      cnt = sum(len(i[2]) for i in instances)
+  %>
   <h1>${self.iname_caption(className, cnt)}</h1>
 </%def>
 <%def name="content()">
-  <% args = {'ns':ns, 'url':url} %>
-  % for cname, namespace, inames in instances:
-    % if len(instances) > 1:
-      <h2>${self.iname_caption(cname, inames)}</h2>
-    % endif
-    ${utils.show_instance_names(inames, whole_path=True)}
-    <% cargs = args.copy(); cargs['className'] = className %>
-    <p>${utils.make_href('CreateInstancePrep', cargs, 'Create New Instance')}</p>
-  % endfor
+  % if cim_error:
+    ${self.print_cim_error("Failed to enumerate instance names!")}
+  % else:
+    <% args = {'ns':ns, 'url':url} %>
+    % for cname, namespace, inames in instances:
+      % if len(instances) > 1:
+        <h2>${self.iname_caption(cname, inames)}</h2>
+      % endif
+      ${utils.show_instance_names(inames, whole_path=True)}
+      <% cargs = args.copy(); cargs['className'] = className %>
+      <p>${utils.make_href('CreateInstancePrep', cargs, 'Create New Instance')}</p>
+    % endfor
+  % endif
 </%def>\
 
 <%def name="iname_caption(cname, inames)">

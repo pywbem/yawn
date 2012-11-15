@@ -10,10 +10,14 @@ ${code | trim,hs}
     </pre>
   </div>
   <h3>Provider Registration MOF</h3>
-  <div class="code">
-    <pre>
+  % if cim_error:
+    ${self.print_cim_error("Failed to get class details!")}
+  % else:
+    <div class="code">
+      <pre>
 ${mof | trim,hs}
-    </pre>
-  </div>
+      </pre>
+    </div>
+  % endif
 </%def>
 ## ex:et:sw=2:ts=2

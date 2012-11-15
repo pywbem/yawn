@@ -12,6 +12,10 @@
 </%def>
 <%def name="caption()"><h1>Get Instance of ${className}</h1></%def>
 <%def name="content()">
-  ${utils.show_instance(instance)}
+  % if cim_error:
+    ${self.print_cim_error("Failed to get instance!")}
+  % else:
+    ${utils.show_instance(instance)}
+  % endif
 </%def>
 ## ex:et:sw=2:ts=2

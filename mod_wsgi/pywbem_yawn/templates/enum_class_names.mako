@@ -68,9 +68,13 @@
     </tr>
   </table>
   <hr />
-  <table class="listing">
-    <% start_class = 'None' if className is None else className %>
-    ${utils.enum_classes(start_class, len(lineage))}
-  </table>
+  % if classes:
+    <table class="listing">
+      <% start_class = 'None' if className is None else className %>
+      ${utils.enum_classes(start_class, len(lineage))}
+    </table>
+  % elif cim_error:
+    ${self.print_cim_error("Failed to enumerate class names!")}
+  % endif
 </%def>
 ## ex:et:ts=2:sw=2

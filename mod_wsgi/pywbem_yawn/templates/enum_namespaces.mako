@@ -27,10 +27,13 @@
     <h1 class="error">Error</h1>
     Unable to enumerate Namespaces. Return to the
     ${utils.make_href('index', target="Login page")}
-   and specify a Namespace.
+    and specify a Namespace.
     % if conn.last_reply is not None:
       <pre>${conn.last_reply | h}</pre>
     % endif
+  % endif
+  % if cim_error:
+    ${self.print_cim_error("Failed to enumerate namespaces!")}
   % endif
 </%def>
 ## ex:et:ts=2:sw=2

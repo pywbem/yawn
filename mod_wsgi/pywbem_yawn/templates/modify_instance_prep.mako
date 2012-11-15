@@ -15,7 +15,7 @@
   ${'Create' if new else 'Modify'} Instance of ${className}
 </%def>
 <%def name="stylesheet()">
-	${parent.stylesheet()}
+  ${parent.stylesheet()}
   ${utils.res_css('instance')}
 </%def>
 <%def name="scripts()">
@@ -31,20 +31,24 @@
   </h1>
 </%def>
 <%def name="content()">
-  <div class="${'new' if new else 'existing'}">
-    <%
-      args = {}
-      if new:
-        args['className'] = className
-        params = items
-        submit = 'Create Instance'
-      else:
-        args['path'] = instance['path']
-        params = instance['props']
-        submit = 'Save Instance'
-      action = urls.build('CreateInstance' if new else 'ModifyInstance', args)
-    %>
-    ${utils.show_input_params(params, action=action, caption=False, submit=submit, prefix='PropName.')}
-  </div>
+  % if cim_error:
+    ${self.print_cim_error("Failed to get class details!")}
+  % else:
+    <div class="${'new' if new else 'existing'}">
+      <%
+        args = {}
+        if new:
+          args['className'] = className
+          params = items
+          submit = 'Create Instance'
+        else:
+          args['path'] = instance['path']
+          params = instance['props']
+          submit = 'Save Instance'
+        action = urls.build('CreateInstance' if new else 'ModifyInstance', args)
+      %>
+      ${utils.show_input_params(params, action=action, caption=False, submit=submit, prefix='PropName.')}
+    </div>
+  % endif
 </%def>
 ## ex:et:sw=2:ts=2
