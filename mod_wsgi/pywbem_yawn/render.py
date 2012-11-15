@@ -136,6 +136,9 @@ class Renderer:
             if self._debug and exc_type is not pywbem.CIMError:
                 # if debugger is turned on, let it do the job
                 return False
+            if exc_type == pywbem.cim_http.AuthError:
+                # do not handle Authentication
+                return False
         return True
 
     def __contains__(self, key): return key in self._template_kwargs

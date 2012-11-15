@@ -7,6 +7,10 @@
 (function($) {
     $(document).ready(function() {
 
+        var base_url = $('script').filter(function() {
+            return typeof $(this).attr('src') != "undefined";
+        }).attr('src').match(RegExp('^(.*)/static/'))[1];
+
         RegExp.escape = function(s) {
                 return s.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
         };
@@ -178,11 +182,12 @@
                 }).get().join(" AND ");
             }
             $.ajax({
-                url      : '/json_query_instances',
+                url      : base_url+'/json_query_instances',
                 data     : {"url":url, "ns":ns, "query":query},
                 dataType : 'json',
                 beforeSend : function(req) {
-                    if (auth) req.setRequestHeader('Authorization', auth);
+                    if (typeof auth == "string")
+                        req.setRequestHeader('Authorization', auth);
                 },
                 success  : function(data, textStatus) {
                     handle_query_reply(prop, ireftype, data, textStatus);
@@ -283,7 +288,7 @@
                             root_table.data('params')[ref_class_name]);
                 }else {
                     $.ajax({
-                        url      : '/json_get_class_keys/'+ref_class_name,
+                        url      : base_url+'/json_get_class_keys/'+ref_class_name,
                         data     : {"url":url, "ns":ns},
                         dataType : 'json',
                         success  : function(data, textStatus) {
@@ -299,7 +304,7 @@
                                      + jqXHR.statusText + ")"));
                         },
                         beforeSend : function(req) {
-                            if (auth)
+                            if (typeof auth == "string")
                                 req.setRequestHeader("Authorization", auth);
                         }
                     });
