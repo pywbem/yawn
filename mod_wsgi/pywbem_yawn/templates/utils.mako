@@ -9,7 +9,7 @@
   if not getattr(target, 'safe', False):
     target = markupsafe.escape(target)
   linkargs = {'href':urls.build(func, kwargs) + append}
-  if classes:
+  if len(classes):
     if isinstance(classes, basestring):
       linkargs['class'] = classes
     else:
@@ -69,7 +69,7 @@
   return res
 %></%def>\
 
-<%def name="print_data_value(p, whole_path=False)"><%doc>
+<%def name="print_data_value(p, whole_path=True)"><%doc>
     if value is an object path and whole_path is True, then its string
     representation is printed
     it whole_path is False, then only classname part is printed
@@ -96,7 +96,7 @@
         target = className
       else:
         target = p['value']
-      return make_href_str('GetInstance', args, target)
+      return make_href_str('GetInstance', args, target, classes=["path-reference"])
     elif p['name'].lower().endswith('classname'):
       args = {'url':url, 'ns':ns, 'className':p['value']}
       return make_href_str('GetClass', args, p['value'])
@@ -222,7 +222,7 @@
   </table>
 </%def>\
 
-<%def name="show_instance_names(inames, with_get_link=True, whole_path=False)">
+<%def name="show_instance_names(inames, with_get_link=True, whole_path=True)">
   % if len(inames) > 0:
     <table class="details">
       <tr class="headers">
@@ -243,7 +243,7 @@
   % endif
 </%def>\
 
-<%def name="show_instance_name(iname, with_get_link=True, whole_path=False)">
+<%def name="show_instance_name(iname, with_get_link=True, whole_path=True)">
   <tr class="instance">
     % if with_get_link:
       <%

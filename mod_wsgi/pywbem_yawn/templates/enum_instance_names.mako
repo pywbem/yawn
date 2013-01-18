@@ -28,7 +28,7 @@
       % if len(instances) > 1:
         <h2>${self.iname_caption(cname, inames)}</h2>
       % endif
-      ${utils.show_instance_names(inames, whole_path=True)}
+      ${utils.show_instance_names(inames)}
       <% cargs = args.copy(); cargs['className'] = className %>
       <p>${utils.make_href('CreateInstancePrep', cargs, 'Create New Instance')}</p>
     % endfor
