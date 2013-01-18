@@ -1,0 +1,244 @@
+0.1.6
+ * render whole path of reference values
+
+ * all instance name references are now rendered with whole path instead
+ * of just class name
+
+ * fixed most of pylint errors and warnings
+
+ * more consitent naming of variables
+ *  - only those used as parameters for views are left in camelCase
+
+ * fixed rendering of filtered_reference_names
+
+ * added a hint for user, when having connection problem
+
+ * which is caused by selinux settings
+
+ * bugfixes
+
+ * fixed referring to jason methods from javascript, when application
+ * is not based on root url ('/')
+
+ * fixed checking for authentication info from javascript
+
+ * do not print traceback upon authentication error, but ask user instead
+
+ * upstream svn revision: 606
+
+0.1.5 upstream svn revision: 605
+ * fixed installation of static files for jqyeru-ui
+
+ * allow to input null,empty or non-empty strings
+
+ * added a checkbox for every not-required, not-key, not-array fields
+ * on user input forms
+ *  - when checked   -> send nothing for this value
+ *         otherwise -> send the contents of input field (may be even
+ *            empty string)
+
+ * upstream svn revision: 604
+
+ * clarified name of method on invocation page
+
+ * upstream svn revision: 603
+
+ * correctly handling arrays of values
+
+ * arrays are working for {get,create,modify}_instance
+
+ * allow specification of particular reference key values, instead of
+ * specifying whole object path as compressed string
+ *  - using async request for instance querying and key properties
+ *    informations acquisition
+ *  - added dependency on jquery-ui (licensed under MIT) for dialog window,
+ *    that allows to select matching instance
+ *  - query for matching instance is composed from non-empty filled keys
+
+ * moved view decorators for Yawn methods to views module
+
+ * added test directory
+
+ * upstream svn revision: 602
+
+ * partitioned __init__.py module into submodules
+
+ * new modules:
+ *     cim_insight - functions for obtaining defails about cim objects
+ *     inputparse  - functions for parsing user input (from html forms)
+ *     render      - functions for conversion of data to string
+ *     util        - miscellaneous utilities
+
+ * changed the way to render templates
+ *  - using a new context manager render.Render
+ *  - this is needed for nicer pywbem error outputing
+
+ * pywbem errors no longer looks like yawn errors
+ *  - instead error description is rendered on particular template in place
+ *    of output data
+
+ * upstream svn revision: 601
+
+ * nice rendering of return value
+
+ * invoke method page shows returned value with qualifiers and renders
+ * clickable path, when reference is returned
+
+ * upstream svn revision: 600
+
+ * correctly rendering array of values
+
+ * correctly rendering data type "array of reference"
+
+ * upstream svn revision: 599
+
+ * fixed displaying of reference in instance names
+
+ * wrong class name was used when displaying references of instance names
+
+ * upstream svn revision: 598
+
+0.1.4 upstream svn revision: 597
+ * fixed rendering of None on invoke method page
+
+ * Caption was set to None on page with results from method invocation.
+ * This resulted in None as caption text.
+
+ * upstream svn revision: 596
+
+ * fixed rendering of reference output value
+
+ * Previously rendering of results from CIM method invocation failed,
+ * when one of the output parameters was reference or instance of object.
+
+ * upstream svn revision: 595
+
+ * fixed classifying method parameters as IN/OUT
+
+ * All method parameters were classified as input.
+ * also output parameters were not classified properly.
+
+ * upstream svn revision: 594
+
+ * fixed ignoring namespace field on login form
+
+ * namespace field on login form was ignored
+ * now if given, EnumClassNames is rendered for it directly
+
+ * upstream svn revision: 593
+
+ * removed obsoleted "Powered by mod_python" logo
+
+ * upstream svn revision: 592
+
+ * fixed rendering of refd values of CIMInstanceName
+
+ * Refered object values were rendered as not-clickable strings for
+ * object paths. Now they are clickable - they lead to corresponding
+ * GetInstance pages.
+
+ * upstream svn revision: 591
+
+ * fixed rendering of instance's REF value
+
+ * previously a className of rendered instance was rendered
+ * in value field in instance table
+
+ * this is now fixed to render a className of referred instance
+
+ * upstream svn revision: 590
+
+ * printing of CIMDateTime value made nicer
+
+ * upstream svn revision: 589
+
+ * fixed not showing invoke method button
+
+ * invoke method button did not show up for methods with no input
+ * parameters
+
+0.1.3 upstream svn revision: 588
+ * fixed parsing of form with serialized object
+
+ * upstream svn revision: 587
+
+ * fixed delete instance page rendering
+
+ * upstream svn revision: 586
+
+ * fixed modify_instance page rendering
+
+ * upstream svn revision: 585
+
+ * fixed not working modify instance method
+
+ * upstream svn revision: 584
+
+ * added link 'create instance' to class page
+
+ * since some providers does not support instance names enumeration, but
+ * creation of instances is possible, we need to have available reference
+ * to that page
+
+ * upstream svn revision: 583
+
+ * log not handled form parameters
+
+ * upstream svn revision: 582
+
+ * allow to set keys for new instances
+
+ * upstream svn revision: 581
+
+ * focus newly created input
+
+ * upstream svn revision: 580
+
+ * enlarged input field of query
+
+ * upstream svn revision: 579
+
+ * fixed installation of static files and templates
+ * fixed wsgi script to handle static files under apache
+
+ * upstream svn revision: 578
+
+0.1.2 upstream svn revision: 577
+ * rewritten to use mako templates
+
+ * templates are stored as files under pywbem_yawn/templates directory
+ * and accessed view pkg_resources functions
+ *  - this means, that they are part of package (or egg)
+ *  - but can be stored separately (for example under /usr/share/...) and
+ *    it's path can be given as parameter to script
+ * the same goes for static data (css, javascript)
+ * all styling code moved to standalone css files
+ * added dependency to jquery for some client-side form magic
+
+ * minimized code duplication
+ *  - removed url, ns, request params from every view method
+ * added thread safety with werkzeug's local storage
+ *  - wsgi allows to handle request concurrently
+ * values of array data types now displayed in form as multiple input
+ *   fields equipped with javascript for easy appending/removing them
+ * doctype changed to xhtml 1.1
+ * all rendered pages should now pass validation
+ * removed two mofcomp methods (I coudn't find out, what they were used for and
+ *   there was no reference to them from any page)
+ * moved todos to TODO file
+
+ * upstream svn revision: 576
+
+ * fixed authorization
+ *  - by adding directive to apache's configuration telling
+ *    it to pass auth headers to the script
+
+ * upstream svn revision: 575
+
+ * original code moved to mod_python
+ *  - mod_python is being deprecated, so more love should go to mod_wsgi
+
+ * added new code for Apache's mod_wsgi
+
+ * upstream svn revision: 574
+
