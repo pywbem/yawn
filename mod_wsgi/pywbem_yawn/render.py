@@ -25,8 +25,13 @@ from collections import defaultdict
 import mako.lookup
 import mako.exceptions
 import pywbem
+import re
 import types
 import zlib
+
+import util
+
+_RE_ERRNO_13 = re.compile(r'^socket\s+error\s*:.*errno\s*13', re.I)
 
 cim_error2text = defaultdict(lambda: "OTHER_ERROR", {
     1  : "FAILED",
@@ -48,6 +53,15 @@ cim_error2text = defaultdict(lambda: "OTHER_ERROR", {
     17 : "METHOD_NOT_FOUND"
 })
 
+class SafeString(unicode):
+    """
+    when this type of string is passed to template, it will be not escaped
+    upon rendering if safe param is True
+    """
+    def __init__(self, text):
+        unicode.__init__(self, text)
+        self.safe = True
+
 def render_cim_error_msg(err):
     if not isinstance(err, pywbem.CIMError):
         raise TypeError("err must be a CIMError")
@@ -58,6 +72,22 @@ def render_cim_error_msg(err):
         errstr = errstr.replace('cmpi:Traceback', 'Traceback')
     errstr = errstr.replace('<br>', '\n').replace('&lt;br&gt;', '\n')
     return errstr
+
+def check_cause(exception):
+    if (  not isinstance(exception, pywbem.CIMError)
+       or exception.args[0] != 0):
+        return
+    if (   _RE_ERRNO_13.match(exception.args[1])
+       and util.is_selinux_running()):
+        import selinux
+        if not selinux.security_get_boolean_active(
+                "httpd_can_network_connect"):
+            cause = ( "SELinux prevents YAWN"
+                      " from connecting to the network using TCP.")
+            solution = SafeString('Please run as root:<br/>'
+                '<span class="code_snippet">'
+                '&nbsp;&nbsp;setsebool -P httpd_can_network_connect 1</span>')
+            return { "description" : cause, "fix" : solution }
 
 class Renderer:
     """
@@ -119,6 +149,10 @@ class Renderer:
                 ks = self._template_kwargs
                 if self._exception is not None: # pywbem.CIMError
                     exc_type, exc_val, exc_tb = self._exception
+                    cause = check_cause(self._exception[1])
+                    if cause:
+                        ks["error_cause_description"] = cause["description"]
+                        ks["error_cause_suggestion"] = cause["fix"]
                     ks["cim_error"] = "%d (%s)" % (exc_val.args[0],
                             cim_error2text[exc_val.args[0]])
                     ks["cim_error_msg"] = render_cim_error_msg(exc_val)
@@ -151,15 +185,6 @@ class Renderer:
 # encodes python object to base64 encoding (used for CIMInstanceNames)
 encode_reference = lambda x: (base64.urlsafe_b64encode(
     zlib.compress(cPickle.dumps(x, cPickle.HIGHEST_PROTOCOL))))
-
-class SafeString(unicode):
-    """
-    when this type of string is passed to template, it will be not escaped
-    upon rendering if safe param is True
-    """
-    def __init__(self, text):
-        unicode.__init__(self, text)
-        self.safe = True
 
 def val2str(x):
     if x is None:

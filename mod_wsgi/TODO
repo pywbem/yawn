@@ -1,7 +1,7 @@
-show associators object paths on ReferenceNames results
-make clear, what method is invoked on invoke_method_prep page
- and show method description
-on user input error, return to dialog page with errors highlighted
+- show associators object paths on ReferenceNames results
+- on user input error, return to dialog page with errors highlighted
+- ensure, that classnames are rendered correctly (with exact case-sensitive)
+  form: not from user input, but from broker
 
 examine possible sfcb bugs:
  - boolean key property does not get sent in reply from broker, when

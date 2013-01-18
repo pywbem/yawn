@@ -76,3 +76,12 @@ def get_user_pw(request):
         return (None, None)
     auth = request.authorization
     return (auth.username, auth.password)
+
+def is_selinux_running():
+    try:
+        import selinux
+        if selinux.security_getenforce() < 0:
+            return False
+    except (ImportError, OSError):
+        return False
+    return True

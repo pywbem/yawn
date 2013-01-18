@@ -1,5 +1,5 @@
 ## -*- coding: utf-8 -*-
-<%! from pywbem_yawn.filters import b64enc %>\
+<%! from pywbem_yawn.filters import b64enc, hs %>\
 <%namespace name="utils" file="utils.mako" />\
 <%doc>
   template arguments:
@@ -76,13 +76,26 @@
 </%def>\
 
 <%def name="print_cim_error(what)">
-  <table id="cim_error" class="${cim_error.lower()}" >
+  <table id="cim_error" class="${cim_error.lower()}">
     <tr class="title"><th colspan="2">Broker error</th></tr>
     <tr class="headers">
       <th>Error Code</th><th>Error Description</th>
     </tr>
     <tr><td id="cim_error_type">${cim_error}</td>
-        <td id="cim_error_msg"><pre>${cim_error_msg | h}</pre></td></tr>
+        <td id="cim_error_msg"><pre>${cim_error_msg | hs}</pre></td></tr>
+  </table><br/>
+  % if error_cause_description:
+  <table id="cim_error_cause">
+    <tr class="title">
+      <th colspan="2">Possible cause</th>
+    </tr><tr>
+      <th class="description">Problem</th>
+      <td class="cim_cause_description">${error_cause_description | hs}</td>
+    </tr><tr>
+      <th class="solution">Possible fix</th>
+      <td class="cim_cause_suggestion">${error_cause_suggestion}</td>
+    </tr> 
   </table>
+  % endif
 </%def> \
 ## ex:et:ts=2:sw=2

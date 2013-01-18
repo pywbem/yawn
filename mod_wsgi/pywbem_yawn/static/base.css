@@ -38,25 +38,34 @@ table.details tr, table.details td, table.details th {
     background-color: #f9f9f9;
 }
 tr.headers { background-color: #CCCCCC }
-#cim_error { margin: 10px; }
-#cim_error {
-  border: 2px solid black;
-  border-spacing: 2px;
-  padding: 5px;
+#cim_error, #cim_error_cause { margin: 10px; }
+#cim_error, #cim_error_cause {
+    border: 2px solid black;
+    border-spacing: 2px;
+    padding: 5px;
 }
-#cim_error tr.title th {
-  background-color: red;
-  font-size: 130%;
-  font-weight: bold;
-  padding: 5px;
+#cim_error tr.title th, #cim_error_cause tr.title th {
+    background-color: red;
+    font-size: 130%;
+    font-weight: bold;
+    padding: 5px;
 }
-#cim_error td {
-  /* background-color: yellow; */
-  padding: 3px;
+#cim_error_cause tr.title th {
+    background-color: yellow;
 }
-#cim_error th, #cim_error td {
-  border: 1px solid black;
+#cim_error_cause th {
+    text-align: left;
+}
+#cim_error td, #cim_error_cause td {
+    /* background-color: yellow; */
+    padding: 3px;
+}
+#cim_error th, #cim_error td, #cim_error_cause th, #cim_error_cause td  {
+    border: 1px solid black;
+}
+.code_snippet {
+    font-family: Courier;
 }
 .hidden {
-  display: none;
+    display: none;
 }
