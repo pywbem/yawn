@@ -15,81 +15,83 @@
 #
 # Authors: Michal Minar <miminar@redhat.com>
 
+"""
+Utilities and functions for parsing user input obtained from html forms.
+"""
+
 import base64
 import cPickle
 import pywbem
 import re
 import zlib
 
-"""
-Utilities and functions for parsing user input obtained from html forms.
-"""
-
 class ReferenceDecodeError(ValueError):
     """
     Exception raised, when parsing of object path failed.
     """
+
     def __init__(self, key=None, path=None):
         msg = "Could not decode compressed object path%s%s!"
         if key is not None:
-            key = ' for key "%s"'%key
+            key = ' for key "%s"' % key
         else:
             key = ''
         if path is not None:
             if isinstance(path, unicode):
                 path = path.encode('utf-8')
-            path = ' "%s"'%str(path)
+            path = ' "%s"' % str(path)
         else:
             path = ''
         msg = msg % (path, key)
         ValueError.__init__(self, msg)
 
-def decode_reference(x):
+def decode_reference(encoded_text):
     """
     Decompress object path to python object.
     """
     try:
-        return cPickle.loads(zlib.decompress(base64.urlsafe_b64decode(x)))
-    except Exception as e:
-        raise ReferenceDecodeError(path=x)
+        return cPickle.loads(zlib.decompress(base64.urlsafe_b64decode(
+            encoded_text)))
+    except Exception:
+        raise ReferenceDecodeError(path=encoded_text)
 
-re_iname = re.compile(r"^((?P<namespace>.*):)?"
+RE_INAME = re.compile(r"^((?P<namespace>.*):)?"
         r"((?P<classname>[a-zA-Z_0-9]*)\.)?(?P<keys>.*)")
 
-"""
-states of keybindings parser
-
-possible transitions:
-    (KEY_NAME,     '=')  -> VALUE_START
-    (KEY_NAME,     ?)    -> KEY_NAME
-    (VALUE_START,  '"')  -> VALUE_STR
-    (VALUE_START,  ?)    -> VALUE_SIMPLE
-    (VALUE_SIMPLE, ',')  -> KEY_NAME
-    (VALUE_SIMPLE, ?)    -> VALUE_SIMPLE
-    (VALUE_STR,    '"')  -> VALUE_END
-    (VALUE_STR,    '\\') -> VALUE_ESC
-    (VALUE_STR,    ?)    -> VALUE_STR
-    (VALUE_ESC,    ?)    -> VALUE_STR
-
-KEYS_END is a final state
-"""
+# states of keybindings parser
+# 
+# possible transitions:
+#     (KEY_NAME,     '=')  -> VALUE_START
+#     (KEY_NAME,     ?)    -> KEY_NAME
+#     (VALUE_START,  '"')  -> VALUE_STR
+#     (VALUE_START,  ?)    -> VALUE_SIMPLE
+#     (VALUE_SIMPLE, ',')  -> KEY_NAME
+#     (VALUE_SIMPLE, ?)    -> VALUE_SIMPLE
+#     (VALUE_STR,    '"')  -> VALUE_END
+#     (VALUE_STR,    '\\') -> VALUE_ESC
+#     (VALUE_STR,    ?)    -> VALUE_STR
+#     (VALUE_ESC,    ?)    -> VALUE_STR
+# 
+# KEYS_END is a final state
 KEY_NAME, VALUE_START, VALUE_SIMPLE, VALUE_STR, VALUE_ESC, VALUE_END, \
     NEXT_KEY, KEYS_END = range(8)
 
-_re_key_name = re.compile(r'([a-zA-Z_0-9]+)=')
-_re_value = re.compile(r'([^"\\]+)')
-_re_value_simple = re.compile(r'([-a-zA-Z_0-9.]+)')
-_re_integer_type = re.compile(r'^[su]int')
+_RE_KEY_NAME = re.compile(r'([a-zA-Z_0-9]+)=')
+_RE_VALUE = re.compile(r'([^"\\]+)')
+_RE_VALUE_SIMPLE = re.compile(r'([-a-zA-Z_0-9.]+)')
+_RE_INTEGER_TYPE = re.compile(r'^[su]int')
 
 def value_str2pywbem(prop, value):
     """
     Used by iname_str2pywbem function for transforming key value
     to a pywbem object.
     """
-    t = prop['type']
-    if (_re_integer_type.match(t) or t == "boolean"):
-        if value[0]  == '"': value = value[1:]
-        if value[-1] == '"': value = value[:-1]
+    prop_type = prop['type']
+    if (_RE_INTEGER_TYPE.match(prop_type) or prop_type == "boolean"):
+        if value[0]  == '"':
+            value = value[1:]
+        if value[-1] == '"':
+            value = value[:-1]
     return pywbem.tocimobj(prop['type'], value)
 
 def iname_str2pywbem(props, iname, classname=None, namespace=None):
@@ -106,69 +108,73 @@ def iname_str2pywbem(props, iname, classname=None, namespace=None):
       preferrably it should be a NocaseDict
     @note does not handle embedded references to objects
     """
-    m = re_iname.match(iname)
-    if not m:
+    match = RE_INAME.match(iname)
+    if not match:
         raise ValueError("Invalid path!")
     kwargs = {'classname':classname, 'namespace':namespace}
     for k in ("namespace", "classname"):
-        if m.group(k):
-            kwargs[k] = m.group(k)
+        if match.group(k):
+            kwargs[k] = match.group(k)
 
     res = pywbem.CIMInstanceName(**kwargs)
 
     state = KEY_NAME
     value = ''
-    keybindings = m.group('keys')
+    keybindings = match.group('keys')
     pos = 0
-    l = keybindings[pos] if len(keybindings) else None
+    letter = keybindings[pos] if len(keybindings) else None
     while state != KEYS_END:
         eol = pos >= len(keybindings)             # end of input
-        l = keybindings[pos] if not eol else None # current letter
+        letter = keybindings[pos] if not eol else None # current letter
         if state == KEY_NAME:
             if eol:
                 state = KEYS_END
             else:
-                m = _re_key_name.match(keybindings, pos)
-                if not m: raise ValueError("Invalid path!")
-                key = m.group(1)
-                if not key in props: raise ValueError(
+                match = _RE_KEY_NAME.match(keybindings, pos)
+                if not match:
+                    raise ValueError("Invalid path!")
+                key = match.group(1)
+                if not key in props:
+                    raise ValueError(
                         "Invalid path: unknown key \"%s\""
                         " for instance of class \"%s\"!"%(
                             key, kwargs['classname']))
                 state = VALUE_START
-                pos = m.end()
+                pos = match.end()
         elif state == VALUE_START:
-            if l == '"':
+            if letter == '"':
                 state = VALUE_STR
                 pos += 1
             else:
                 state = VALUE_SIMPLE
         elif state == VALUE_SIMPLE:
-            m = _re_value_simple.match(keybindings, pos)
-            if not m: raise ValueError("Invalid path!")
-            res[key] = value_str2pywbem(props[key], m.group(1))
-            pos = m.end()
+            match = _RE_VALUE_SIMPLE.match(keybindings, pos)
+            if not match:
+                raise ValueError("Invalid path!")
+            res[key] = value_str2pywbem(props[key], match.group(1))
+            pos = match.end()
             state = NEXT_KEY
         elif state == VALUE_STR:
-            if l == '"':
+            if letter == '"':
                 res[key] = value_str2pywbem(props[key], value)
                 value = ''
                 state = VALUE_END
-            elif l == '\\':
+            elif letter == '\\':
                 state = VALUE_ESC
                 pos += 1
             else:
-                m = _re_value.match(keybindings, pos)
-                if not m: raise ValueError("Invalid path:"
+                match = _RE_VALUE.match(keybindings, pos)
+                if not match:
+                    raise ValueError("Invalid path:"
                     " expected '\"' or '\\'!")
-                pos = m.end()
-                value += m.group(1)
+                pos = match.end()
+                value += match.group(1)
         elif state == VALUE_ESC:
             state = VALUE_STR
-            value += l
+            value += letter
             pos += 1
         elif state == VALUE_END:
-            if l == '"':
+            if letter == '"':
                 state = NEXT_KEY
                 pos += 1
             else:
@@ -176,7 +182,7 @@ def iname_str2pywbem(props, iname, classname=None, namespace=None):
         elif state == NEXT_KEY:
             if eol:
                 state = KEYS_END
-            elif l == ',':
+            elif letter == ',':
                 state = KEY_NAME
                 pos += 1
             else:
@@ -207,6 +213,7 @@ def formvalue2iname(param, prefix, formdata, suffix='', pop_used=False,
         raise ValueError("param must represent a reference to object")
     param_name = prefix.lower()+param['name'].lower()+suffix
     def get_value(name):
+        """@return value from formdata and optionally remove it"""
         res = formdata[name]
         if pop_used:
             del formdata[name]
@@ -231,13 +238,14 @@ def formvalue2iname(param, prefix, formdata, suffix='', pop_used=False,
         if pop_used and formdata.has_key(param_name+'-reftype'):
             del formdata[param_name+'-reftype']
         value = get_value(param_name)
-        if not value: return None
+        if not value:
+            return None
         # base64 decode does not properly handle unicode
         try:
             if isinstance(value, unicode):
                 value = value.encode('utf-8')
             result = decode_reference(value)
-        except ReferenceDecodeError as e:
+        except ReferenceDecodeError:
             raise ReferenceDecodeError(param_name, value)
     return result
 
@@ -253,16 +261,14 @@ def formvalue2cimobject(param, prefix, formdata, pop_used=False,
     prefix = prefix.lower()
     param_name = param['name'].lower()
     def value(name):
+        """@return value of form with optional removal"""
         res = formdata[prefix + name.lower()]
         if pop_used:
             del formdata[prefix + name.lower()]
         return res
     def process_simple_value(val):
-        dt = param['type']
-        if isinstance(dt, dict): # reference
-            return formvalue2iname(param, prefix, pop_used=pop_used,
-                    namespace=namespace)
-        return pywbem.tocimobj(dt, val)
+        """@return value as a cim object"""
+        return pywbem.tocimobj(param['type'], val)
 
     if param['is_array']:
         result = []
@@ -279,12 +285,13 @@ def formvalue2cimobject(param, prefix, formdata, pop_used=False,
                 size = param['array_size']
             for i in range(size):
                 if isinstance(param['type'], dict):
-                    o = formvalue2iname(param, prefix, formdata,
+                    pywbem_val = formvalue2iname(param, prefix, formdata,
                             suffix='-'+str(i), pop_used=pop_used,
                             namespace=namespace)
                 else:
-                    o = process_simple_value(value(param_name + '-' + str(i)))
-                result.append(o)
+                    pywbem_val = process_simple_value(
+                            value(param_name + '-' + str(i)))
+                result.append(pywbem_val)
     else:
         if prefix + param_name + '-null' in formdata:
             return None

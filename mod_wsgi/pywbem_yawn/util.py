@@ -18,66 +18,87 @@
 """
 Various utilities.
 """
+from collections import defaultdict
 import inspect
 import re
 
+_RE_URL_FUNC = re.compile(r'^[A-Z][a-z_A-Z0-9]+$')
+
 def cmp_pnames(klass):
     """
-    compare function for sorting property names placing keys before non-keys
+    Wrapper for comparing function for class property names, which
+    places keys before non-key properties.
+    It accepts instance of pywbem.CIMClass.
     """
-    def _cmp(a, b):
+    def _cmp(aname, bname):
+        """
+        compare function for sorting class property names placing
+        keys before non-keys
+        """
         is_key = lambda key: (
                     klass and klass.properties.has_key(key)
                 and klass.properties[key].qualifiers.has_key('key'))
-        is_key_a = is_key(a)
-        is_key_b = is_key(b)
+        is_key_a = is_key(aname)
+        is_key_b = is_key(bname)
         if is_key_a and is_key_b:
-            return cmp(a, b)
+            return cmp(aname, bname)
         if is_key_a and not is_key_b:
             return -1
         if not is_key_a and is_key_b:
             return 1
-        return cmp(a, b)
+        return cmp(aname, bname)
     return _cmp
 
 def cmp_params(klass):
     """
-    compare function for class properties represented as python
-    dictionaries
+    Wrapper for comparing class/instance attribute names represented
+    by dictionaries.
+    @param klass is instance of pywbem.CIMClass
     """
     _cmp_orig = cmp_pnames(klass)
-    def _cmp(a, b):
-        if a['is_method'] and not b['is_method']:
+    def _cmp(aname, bname):
+        """
+        compare function for class properties represented as python
+        dictionaries
+        """
+        if aname['is_method'] and not bname['is_method']:
             return -1
-        if not a['is_method'] and b['is_method']:
+        if not aname['is_method'] and bname['is_method']:
             return 1
-        return _cmp_orig(a['name'], b['name'])
+        return _cmp_orig(aname['name'], bname['name'])
     return _cmp
 
-_re_url_func = re.compile(r'^[A-Z][a-z_A-Z0-9]+$')
 def base_script(request):
     """
     @return base url of yawn application
     """
-    global url_funcs
     path_parts = [p for p in
         request.environ['SCRIPT_NAME'].split('/') if p ]
-    if len(path_parts) and  _re_url_func.match(path_parts[-1]):
+    if len(path_parts) and _RE_URL_FUNC.match(path_parts[-1]):
         try:
             if inspect.isfunction(eval(path_parts[-1])):
                 path_parts.pop(len(path_parts) - 1)
-        except: pass
+        except Exception:
+            pass
     if len(path_parts) and path_parts[-1].startswith('index.'):
         path_parts.pop(len(path_parts[-1]))
     return "/" + "/".join(path_parts)
 
 def get_user_pw(request):
+    """
+    Obtains user's credentials from request object.
+    @return (username, password) if credentials are available
+    and (None, None) otherwise
+    """
     if 'Authorization' not in request.headers:
         return (None, None)
     auth = request.authorization
     return (auth.username, auth.password)
 
 def is_selinux_running():
+    """
+    @return True if selinux is available on system and enabled
+    """
     try:
         import selinux
         if selinux.security_getenforce() < 0:
@@ -85,3 +106,13 @@ def is_selinux_running():
     except (ImportError, OSError):
         return False
     return True
+
+def rdefaultdict():
+    """
+    Resursive defaultdict factory.
+    Usage:
+        d = rdefaultdict()
+        d[1] = "string"
+        d[2]["second_level"] = []
+    """
+    return defaultdict(rdefaultdict)

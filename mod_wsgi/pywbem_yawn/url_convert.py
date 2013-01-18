@@ -21,31 +21,13 @@ Custom URL converters to obtain information from parts of url.
 
 from pywbem_yawn import inputparse
 from pywbem_yawn import render
-from werkzeug.routing import BaseConverter, ValidationError
-
-class URLConverter(BaseConverter):
-
-    def __init__(self, url_map):
-        BaseConverter.__init__(self, url_map)
-        self.regex = r'(?i)https?%3A%2F%2F[a-zA-z0-9.-]+(?::[0-9]+)?'
-
-    def to_python(self, value):
-        try:
-            o = urlparse.urlparse(value)
-            if o.scheme not in ('http', 'https'):
-                raise ValidationError(
-                        'url scheme must be one of [http, https]')
-            if not path:
-                raise ValidationError('url path part must not be empty')
-            return o.geturl()
-        except ValidationError: raise
-        except Exception as e:
-            raise ValidationError(e)
-
-    def to_url(self, value):
-        return value
+from werkzeug.routing import BaseConverter
 
 class IdentifierConverter(BaseConverter):
+    """
+    Used for identifier names in url.
+    Example: CIM_ElementName
+    """
 
     def __init__(self, url_map):
         BaseConverter.__init__(self, url_map)
@@ -57,33 +39,10 @@ class IdentifierConverter(BaseConverter):
     def to_url(self, value):
         return value
 
-class ModeConverter(BaseConverter):
-
-    def __init__(self, url_map):
-        BaseConverter.__init__(self, url_map)
-        self.regex = r'(?i)(?:deep|flat|shallow)'
-
-    def to_python(self, value):
-        return value.lower()
-
-    def to_url(self, value):
-        return value.lower()
-
-class BooleanConverter(BaseConverter):
-
-    def __init__(self, url_map):
-        super(BooleanConverter, self).__init__(url_map)
-        self.regex = '(?i)(?:true|false|yes|no|1|0)'
-
-    def to_python(self, value):
-        if value.lower() in ('true', 'yes', '1'):
-            return True
-        return False
-
-    def to_url(self, value):
-        return 'true' if value is True else 'false'
-
 class Base64Converter(BaseConverter):
+    """
+    Used for encoded object in base64 format in url.
+    """
 
     def __init__(self, url_map):
         BaseConverter.__init__(self, url_map)
@@ -101,6 +60,9 @@ class Base64Converter(BaseConverter):
         return render.encode_reference(value)
 
 class QLangConverter(BaseConverter):
+    """
+    Used for names of query languages like WQL.
+    """
 
     QLANG_WQL = 0
     query_languages = ["WQL"]
@@ -110,8 +72,8 @@ class QLangConverter(BaseConverter):
         self.regex = r'(?i)(?:WQL)'
 
     def to_python(self, value):
-        return { 'wql' : QLANG_WQL }[value.lower()]
+        return { 'wql' : QLangConverter.QLANG_WQL }[value.lower()]
 
     def to_url(self, value):
-        return query_languages[value]
+        return QLangConverter.query_languages[value]
 

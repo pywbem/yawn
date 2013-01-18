@@ -28,12 +28,11 @@ import pywbem
 import re
 import types
 import zlib
-
-import util
+from pywbem_yawn import util
 
 _RE_ERRNO_13 = re.compile(r'^socket\s+error\s*:.*errno\s*13', re.I)
 
-cim_error2text = defaultdict(lambda: "OTHER_ERROR", {
+CIM_ERROR2TEXT = defaultdict(lambda: "OTHER_ERROR", {
     1  : "FAILED",
     2  : "ACCESS_DENIED",
     3  : "INVALID_NAMESPACE",
@@ -53,7 +52,7 @@ cim_error2text = defaultdict(lambda: "OTHER_ERROR", {
     17 : "METHOD_NOT_FOUND"
 })
 
-class SafeString(unicode):
+class SafeString(unicode): #pylint: disable=R0924,R0904,C0111
     """
     when this type of string is passed to template, it will be not escaped
     upon rendering if safe param is True
@@ -63,6 +62,10 @@ class SafeString(unicode):
         self.safe = True
 
 def render_cim_error_msg(err):
+    """
+    Generates error from pywbem.CIMError exception as html.
+    @return generated message
+    """
     if not isinstance(err, pywbem.CIMError):
         raise TypeError("err must be a CIMError")
     errstr = err[1]
@@ -74,6 +77,12 @@ def render_cim_error_msg(err):
     return errstr
 
 def check_cause(exception):
+    """
+    Check, whether exception was thrown due to some known problem.
+    If it's known, provide some hints for user, so that he can fix it.
+    @return { 'description' : dsc, 'fix': fix} in case, that
+    problem is known, None otherwise.
+    """
     if (  not isinstance(exception, pywbem.CIMError)
        or exception.args[0] != 0):
         return
@@ -89,7 +98,7 @@ def check_cause(exception):
                 '&nbsp;&nbsp;setsebool -P httpd_can_network_connect 1</span>')
             return { "description" : cause, "fix" : solution }
 
-class Renderer:
+class Renderer(object):
     """
     A context manager used to encapsulate pywbem calls obtaining information
     for template rendering. If a pywbem CIMError occurs, it renders given
@@ -123,48 +132,72 @@ class Renderer:
 
     @property
     def lookup(self):
+        """
+        @return make templates lookup object
+        """
         return self._lookup
 
     @property
     def template(self):
+        """
+        @return name of template to render
+        """
         return self._template
 
     @property
     def template_kwargs(self):
+        """
+        @return copy of keyword arguments for template rendering
+        """
         return self._template_kwargs.copy()
 
     @template_kwargs.setter
     def template_kwargs(self, kwargs):
+        """
+        Overwrite keyword arguments dictionary for template.
+        """
         self._template_kwargs = kwargs
         return kwargs
 
     @property
     def result(self):
+        """
+        @return rendered template as string
+        """
         if self._result is None:
             template = self._lookup.get_template(self._template)
             if (  self._exception is not None
                and self._exception[0] is not pywbem.CIMError):
                 self._result = mako.exceptions.html_error_template().render()
             else:
-                ks = self._template_kwargs
+                kwargs = self._template_kwargs
                 if self._exception is not None: # pywbem.CIMError
-                    exc_type, exc_val, exc_tb = self._exception
+                    exc_val = self._exception[1]
                     cause = check_cause(self._exception[1])
                     if cause:
-                        ks["error_cause_description"] = cause["description"]
-                        ks["error_cause_suggestion"] = cause["fix"]
-                    ks["cim_error"] = "%d (%s)" % (exc_val.args[0],
-                            cim_error2text[exc_val.args[0]])
-                    ks["cim_error_msg"] = render_cim_error_msg(exc_val)
-                self._result = template.render(**ks)
+                        kwargs["error_cause_description"] = cause["description"]
+                        kwargs["error_cause_suggestion"] = cause["fix"]
+                    kwargs["cim_error"] = "%d (%s)" % (exc_val.args[0],
+                            CIM_ERROR2TEXT[exc_val.args[0]])
+                    kwargs["cim_error_msg"] = render_cim_error_msg(exc_val)
+                self._result = template.render(**kwargs)
         return self._result
 
     def __enter__(self):
+        """
+        Enter method for context management.
+        @see __exit__
+        """
         self._exception = None
         self._result = None
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        """
+        If an exception like pywbem.CIMError is raised, it will be
+        saved for rendering provided template.
+        If in debugging mode, let it be propagated upwards.
+        """
         if exc_type is not None:
             self._exception = (exc_type, exc_val, exc_tb)
             if self._debug and exc_type is not pywbem.CIMError:
@@ -175,62 +208,78 @@ class Renderer:
                 return False
         return True
 
-    def __contains__(self, key): return key in self._template_kwargs
-    def __len__(self): return len(self._template_kwargs)
-    def __getitem__(self, key): return self._template_kwargs[key]
+    def __contains__(self, key):
+        return key in self._template_kwargs
+    def __len__(self):
+        return len(self._template_kwargs)
+    def __getitem__(self, key):
+        return self._template_kwargs[key]
     def __setitem__(self, key, val):
         self._template_kwargs[key] = val
         return val
+    def __delitem__(self, key):
+        return self._template_kwargs.pop(key)
 
-# encodes python object to base64 encoding (used for CIMInstanceNames)
-encode_reference = lambda x: (base64.urlsafe_b64encode(
-    zlib.compress(cPickle.dumps(x, cPickle.HIGHEST_PROTOCOL))))
+def encode_reference(obj):
+    """
+    Encodes python object to base64 encoding (used for CIMInstanceNames,
+    which can be passed as page parameters).
+    @return compressed and encoded object.
+    """
+    return base64.urlsafe_b64encode(
+            zlib.compress(cPickle.dumps(obj, cPickle.HIGHEST_PROTOCOL)))
 
-def val2str(x):
-    if x is None:
+def val2str(value):
+    """
+    @return string representation of cim value
+    """
+    if value is None:
         return SafeString('<span class="null_val">Null</span>')
-    if isinstance(x, pywbem.CIMDateTime):
-        x = x.timedelta if x.is_interval else x.datetime
-    if isinstance(x, datetime.datetime):
-        x = x.strftime("%Y/%m/%d %H:%M:%S.%f")
-    elif isinstance(x, datetime.date):
-        x = x.strftime("%Y/%m/%d")
-    elif isinstance(x, datetime.time):
-        x = x.strftime("%H:%M:%S.%f")
-    if isinstance(x,list):
+    if isinstance(value, pywbem.CIMDateTime):
+        value = value.timedelta if value.is_interval else value.datetime
+    if isinstance(value, datetime.datetime):
+        value = value.strftime("%Y/%m/%d %H:%M:%S.%f")
+    elif isinstance(value, datetime.date):
+        value = value.strftime("%Y/%m/%d")
+    elif isinstance(value, datetime.time):
+        value = value.strftime("%H:%M:%S.%f")
+    if isinstance(value, list):
         rval = '{'
-        if x:
-            for i in range(0, len(x)):
-                item = x[i]
+        if value:
+            for i in range(0, len(value)):
+                item = value[i]
                 if i > 0:
-                    rval+= ', '
-                strItem = val2str(item)
+                    rval += ', '
+                str_item = val2str(item)
                 if type(item) in types.StringTypes:
-                    strItem = '"' + strItem + '"'
-                rval+= strItem
-        rval+= '}'
+                    str_item = '"' + str_item + '"'
+                rval += str_item
+        rval += '}'
         return rval
-    return unicode(x)
+    return unicode(value)
 
 def mapped_value2str(val, quals):
+    """
+    Similar to val2str, but this is used for valuemap qualifed values.
+    """
     rval = ''
     if isinstance(val, list):
-        rval+= '{'
-        valList = val
+        rval += '{'
+        value_list = val
     else:
-        valList = [val]
-    valmapQual = quals['valuemap'].value
-    valuesQual = quals['values'].value
-    for i in valList:
-        if i is not valList[0]:
+        value_list = [val]
+    valmap_qualifier = quals['valuemap'].value
+    values_qualifier = quals['values'].value
+    for i in value_list:
+        if i is not value_list[0]:
             rval += ', '
         propstr = val2str(i)
-        rval+= propstr
-        if propstr in valmapQual:
-            valIdx = valmapQual.index(propstr)
-            if valIdx < len(valuesQual):
-                rval+= ' ('+valuesQual[valIdx]+')'
+        rval += propstr
+        if propstr in valmap_qualifier:
+            value_index = valmap_qualifier.index(propstr)
+            if value_index < len(values_qualifier):
+                rval += ' ('+values_qualifier[value_index]+')'
     if isinstance(val, list):
-        rval+= '}'
+        rval += '}'
     return SafeString(rval)
 

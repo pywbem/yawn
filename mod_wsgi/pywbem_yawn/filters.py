@@ -22,10 +22,18 @@ Filters used in mako templates. For usage see:
 import base64
 import markupsafe
 
-def hs(text):
+def hs(text):   #pylint: disable=C0103
+    """
+    Is filter similar to mako's h. It differs in not escaping text,
+    that has been marked as safe (has attribute 'safe' equal to True).
+    @return escaped text for not safe strings
+    """
     if getattr(text, 'safe', False):
         return text
     return markupsafe.escape(text)
 
 def b64enc(text):
-   return base64.urlsafe_b64encode(text)
+    """
+    @return text compressed in base64 format
+    """
+    return base64.urlsafe_b64encode(text)

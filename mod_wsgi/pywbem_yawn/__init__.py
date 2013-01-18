@@ -28,6 +28,11 @@
 # @author Norm Paxton <npaxton@novell.com>
 # @author Michal Minar <miminar@redhat.com>
 
+"""
+Module defining wsgi YAWN application, that provides access to
+CIM brokers with pywbem --- using WBEM CIM-XML protocol.
+"""
+
 import bisect
 import logging
 import pywbem
@@ -36,7 +41,7 @@ import mako
 import mako.lookup
 import pkg_resources
 import traceback
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from itertools import chain
 from werkzeug.wrappers import Response, Request
 from werkzeug.routing import Map, Rule
@@ -46,7 +51,7 @@ from werkzeug.local import Local, release_local
 try:
     from pywbem.cim_provider2 import codegen
 except ImportError:
-    codegen = None
+    codegen = None  #pylint: disable=C0103
 from pywbem_yawn import cim_insight
 from pywbem_yawn import inputparse
 from pywbem_yawn import render
@@ -55,16 +60,16 @@ from pywbem_yawn import views
 from pywbem_yawn.url_convert import (
         IdentifierConverter, Base64Converter, QLangConverter)
 
-log = logging.getLogger(__name__)
+_LOG = logging.getLogger(__name__)
 
 AC_ASSOCIATORS, AC_ASSOCIATOR_NAMES, AC_REFERENCES, AC_REFERENCE_NAMES = \
         range(4)
-assoc_calls = [ 'associators', 'associatornames'
+ASSOC_CALLS = [ 'associators', 'associatornames'
               , 'references', 'referencenames' ]
-assoc_call_labels = [ 'Associators', 'Associator Names'
+ASSOC_CALL_LABELS = [ 'Associators', 'Associator Names'
                     , 'References', 'Reference Names' ]
 
-url_map = Map([
+URL_MAP = Map([
     Rule('/', endpoint='index'),
     Rule('/json_get_class_list', endpoint="json_get_class_list",
         methods=["GET"]),
@@ -129,6 +134,25 @@ url_map = Map([
 # HANDLER
 # *****************************************************************************
 class Yawn(object):
+    """
+    WSGI application providing access to CIMOMs.
+    YAWN means Yet Another WBEM Navigator. WBEM is a protocol is XML based
+    protocol for communication between CIMOM broker and clients.
+    
+    It's supposed to run either under lightweight daemon using for
+    example workzeug's run_simple function, or under apache. For the
+    latter a SharedDateMiddleware class from workzeug's wsgi module can be
+    used.
+
+    Methods beginning with 'on_' are views, which are called with parameters
+    parsed from HTTP methods GET and POST, and that return xhtml rendered
+    pages as text in return.
+
+    Views typically gather data from CIMOM broker based on client's request
+    and then render html page with use of maco template system.
+    For this pupose a renderer function is called to obtain context manager
+    handling the rendering.
+    """
 
     def __init__(self,
             templates     = None,
@@ -138,7 +162,7 @@ class Yawn(object):
 
         if templates is None:
             templates = pkg_resources.resource_filename(__name__, 'templates')
-            log.debug('templates directory: {}'.format(templates))
+            _LOG.debug('templates directory: {}'.format(templates))
         self._lookup = mako.lookup.TemplateLookup(
                 directories      = templates,
                 module_directory = modules
@@ -149,6 +173,11 @@ class Yawn(object):
 
     @property
     def response(self):
+        """
+        Cached property.
+        @return Response object, that is created with the first invocation of
+        this property.
+        """
         try:
             return self._local.response
         except AttributeError:
@@ -158,12 +187,17 @@ class Yawn(object):
                 resp.headers['WWW-Authenticate'] = (
                         ', '.join([ 'Basic realm="CIMOM at %s"'%url
                                   , 'qop="auth,auth-int"']))
-            except AttributeError: pass
+            except AttributeError:
+                pass
             self._local.response = resp
             return resp
 
     @property
     def static_prefix(self):
+        """
+        Cached property.
+        @return url prefix to use for static files
+        """
         try:
             return self._local.static_prefix
         except AttributeError:
@@ -176,68 +210,106 @@ class Yawn(object):
 
     @property
     def urls(self):
+        """
+        Cached property.
+        @return url map binded to current request environment. It's created
+        with the first invocation.
+        """
         try:
             return self._local.urls
         except AttributeError:
-            self._local.urls = url_map.bind_to_environ(
+            self._local.urls = URL_MAP.bind_to_environ(
                     self._local.request.environ)
             return self._local.urls
 
     @property
     def conn(self):
+        """
+        Cached property.
+        It obtaines authentication data from request headers and passes
+        them to connection object. But they are not checked. Only after
+        ther first call to any method of this object, it will be known,
+        whether all informations are correct.
+        @return wbem connection object created upon first invocation.
+        """
         url = self._local.url
-        ns  = self._local.ns
+        namespace  = self._local.namespace
         if (   hasattr(self._local, 'connection')
            and self._local.connection.url == url
-           and self._local.connection.default_namespace == ns):
+           and self._local.connection.default_namespace == namespace):
             return self._local.connection
 
         req = self._local.request
-        (user, pw) = util.get_user_pw(req)
+        (user, password) = util.get_user_pw(req)
         if user is None:
             user = ''
-        if pw is None:
-            pw = ''
+        if password is None:
+            password = ''
         if (   len(user) > 0
            and req.cookies.has_key('yawn_logout')):
             if req.cookies['yawn_logout'] in ['true', 'pending']:
                 self.response.set_cookie('yawn_logout', 'false',
                         path=util.base_script(req))
-                user, pw = '', ''
-        self._local.connection = pywbem.WBEMConnection(url, (user, pw))
-        self._local.connection.default_namespace = ns
+                user, password = '', ''
+        self._local.connection = pywbem.WBEMConnection(url, (user, password))
+        self._local.connection.default_namespace = namespace
         self._local.connection.debug = True
         return self._local.connection
 
     def renderer(self, template, **kwargs):
-        ks = {
+        """
+        Every view rendering html page should use object returned by
+        this method to render it. Renderer is passed some arguments,
+        that are already known and any other passed in kwargs by caller.
+        @return Renderer context manager object.
+        @see Renderer
+        """
+        render_kwargs = {
                 'urls'   : self.urls,
                 'static' : self.static_prefix,
                 'conn'   : getattr(self._local, 'connection', None),
                 'url'    : getattr(self._local, 'url', None),
-                'ns'     : getattr(self._local, 'ns', None)
+                'ns'     : getattr(self._local, 'namespace', None)
               }
-        ks.update(kwargs)
+        render_kwargs.update(kwargs)
         return render.Renderer(self._lookup, template,
-                debug=self._debug, **ks)
+                debug=self._debug, **render_kwargs)
 
     def dispatch_request(self, request):
+        """
+        Calls local handler beginning with 'on_' corresponding to request's
+        url.
+        @return Response object with html rendered page.
+        """
         self._local.request = request
         try:
             endpoint, values = self.urls.match()
             return getattr(self, 'on_' + endpoint)(**values)
-        except HTTPException, e:
-            return e
+        except HTTPException as exc:
+            return exc
 
     def wsgi_app(self, environ, start_response):
+        """
+        Wraps above dispatch_request method in a way, that it prepares
+        Request object, and binds returned response to environment.
+        """
         request = Request(environ)
         response = self.dispatch_request(request)
         return response(environ, start_response)
 
     def __call__(self, environ, start_response):
+        """
+        This method should be called to handle any request from client.
+        It directs arguments to wsgi_app and handles any exception, that
+        might occur. In case of AuthError returned by broker, it returns
+        unauthorized response object.
+
+        Finally it releases any allocated data during request handling.
+        @return Response object.
+        """
         try:
             return self.wsgi_app(environ, start_response)
-        except pywbem.cim_http.AuthError as arg:
+        except pywbem.cim_http.AuthError:
             response = self.response
             unresp = Unauthorized().get_response(environ)
             response.status_code = unresp.status_code
@@ -255,48 +327,59 @@ class Yawn(object):
         finally:
             release_local(self._local)
 
-    def _createOrModifyInstance(self, className, path, **params):
+    def _create_or_modify_instance(self, class_name, path, **params):
+        """
+        Main function called either to create or modify instance.
+        If path is None, new instance will be created.
+        @param params is a dictionary of attributes to set.
+        """
         conn = self.conn
-        with self.renderer('modify_instance.mako', className=className) as r:
-            klass = conn.GetClass(ClassName=className,
+        with self.renderer('modify_instance.mako', className=class_name) \
+                as renderer:
+            klass = conn.GetClass(ClassName=class_name,
                     LocalOnly=False, IncludeQualifiers=True)
             if path is not None:
                 inst = conn.GetInstance(InstanceName=path, LocalOnly = False)
             else:
-                inst = pywbem.CIMInstance(className)
+                inst = pywbem.CIMInstance(class_name)
                 inst.path = pywbem.CIMInstanceName(
-                        className, namespace=self._local.ns)
+                        class_name, namespace=self._local.namespace)
 
-            for p in cim_insight.get_class_props(
+            for prop in cim_insight.get_class_props(
                     klass, inst=inst, include_all=True):
-                if path is not None and p['is_key']:
+                if path is not None and prop['is_key']:
                     # do not allow key modification of existing instance
                     continue
                 value = inputparse.formvalue2cimobject(
-                        p, 'propname.', pywbem.NocaseDict(params), True,
-                        namespace=self._local.ns)
-                if p['is_key']:
-                    inst.path[p['name']] = value
+                        prop, 'propname.', pywbem.NocaseDict(params), True,
+                        namespace=self._local.namespace)
+                if prop['is_key']:
+                    inst.path[prop['name']] = value
                 if (  value is None
                    or (isinstance(value, list) and len(value) == 0)):
-                    inst.update_existing([(p['name'], None)])
+                    inst.update_existing([(prop['name'], None)])
                 else:
-                    inst[p['name']] = value
-            log.debug("not handled formvalues: {}".format(params))
+                    inst[prop['name']] = value
+            _LOG.debug("not handled formvalues: {}".format(params))
             if path:
                 if path.namespace is None:
-                    path.namespace = self._local.ns
+                    path.namespace = self._local.namespace
                 inst.path = path
                 conn.ModifyInstance(ModifiedInstance=inst)
             else:
                 path = conn.CreateInstance(NewInstance=inst)
             inst = conn.GetInstance(InstanceName=path, LocalOnly = False)
-            r['instance'] = cim_insight.get_inst_info(inst, klass)
-        return r.result
+            renderer['instance'] = cim_insight.get_inst_info(inst, klass)
+        return renderer.result
 
-    def _enumInstrumentedClassNames(self):
+    def _enum_instrumented_class_names(self):
+        """
+        Enumerates only those class names, that are instrumented (there
+        is a provider under broker implementing its interface.
+        """
         fetched_classes = []
         def get_class(cname):
+            """Obtain class from broker and store it in cache."""
             fetched_classes.append(cname)
             return conn.GetClass(ClassName=cname,
                        LocalOnly=True, PropertyList=[],
@@ -304,183 +387,246 @@ class Yawn(object):
         conn = self.conn
         start_class = '.'
         with self.renderer('enum_instrumented_class_names.mako',
-                mode='deep', className=start_class) as r:
+                mode='deep', className=start_class) as renderer:
             caps = conn.EnumerateInstances(
                             ClassName='PG_ProviderCapabilities',
                             namespace='root/PG_InterOp',
                             PropertyList=['Namespaces', 'ClassName'])
-            deepDict = {start_class:[]}
+            deep_dict = {start_class:[]}
             for cap in caps:
-                if self._local.ns not in cap['Namespaces']:
+                if self._local.namespace not in cap['Namespaces']:
                     continue
                 if cap['ClassName'] in fetched_classes:
                     continue
                 klass = get_class(cap['ClassName'])
                 if klass.superclass is None:
-                    deepDict[start_class].append(klass.classname)
+                    deep_dict[start_class].append(klass.classname)
                 else:
                     try:
-                        deepDict[klass.superclass].append(klass.classname)
+                        deep_dict[klass.superclass].append(klass.classname)
                     except KeyError:
-                        deepDict[klass.superclass] = [klass.classname]
+                        deep_dict[klass.superclass] = [klass.classname]
                     while klass.superclass is not None:
                         if klass.superclass in fetched_classes:
                             break
                         klass = get_class(klass.superclass)
                         if klass.superclass is None and \
-                                klass.superclass not in deepDict[start_class]:
-                            deepDict[start_class].append(klass.classname)
-                        elif klass.superclass in deepDict:
+                                klass.superclass not in deep_dict[start_class]:
+                            deep_dict[start_class].append(klass.classname)
+                        elif klass.superclass in deep_dict:
                             if (  klass.classname
-                               not in deepDict[klass.superclass]):
-                                deepDict[klass.superclass].append(
+                               not in deep_dict[klass.superclass]):
+                                deep_dict[klass.superclass].append(
                                         klass.classname)
                             break
                         else:
-                            deepDict[klass.superclass] = [klass.classname]
-            r['classes'] = deepDict
-        return r.result
+                            deep_dict[klass.superclass] = [klass.classname]
+            renderer['classes'] = deep_dict
+        return renderer.result
+
+    def _enum_namespaces(self):
+        """
+        Different brokers have different CIM classes, that can be used to
+        enumerate namespaces. And those may be nested under miscellaneous
+        namespaces. This method tries all known combinations and returnes
+        first non-empy list of namespace instance names.
+        @return (interopns, nsclass, nsinsts)
+        where
+            interopns is a instance name of namespace holding namespace CIM
+                class
+            nsclass is a name of class used to enumerate namespaces
+            nsinsts is a list of all instance names of nsclass
+        """
+        conn = self.conn
+        nsclasses =  ['CIM_Namespace', '__Namespace']
+        namespaces = [ 'root/cimv2', 'Interop', 'interop', 'root'
+                     , 'root/interop']
+        interopns = None
+        nsclass = None
+        nsinsts = []
+        for icls in range(len(nsclasses)):
+            for ins in range(len(namespaces)):
+                try:
+                    nsinsts = conn.EnumerateInstanceNames(
+                            nsclasses[icls],
+                            namespace=namespaces[ins])
+                    interopns = namespaces[ins]
+                    nsclass = nsclasses[icls]
+                except pywbem.CIMError, arg:
+                    if arg[0] in [pywbem.CIM_ERR_INVALID_NAMESPACE,
+                                  pywbem.CIM_ERR_NOT_SUPPORTED,
+                                  pywbem.CIM_ERR_INVALID_CLASS]:
+                        continue
+                    else:
+                        raise
+                if len(nsinsts) > 0:
+                    break
+        return (interopns, nsclass, nsinsts)
 
     def on_index(self):
+        """
+        View with login form.
+        """
         resp = self.response
         resp.data = self.renderer('index.mako').result
         return resp
 
     @views.html_view()
-    def on_AssociatedClasses(self, className):
+    def on_AssociatedClasses(self, className):      #pylint: disable=C0103
+        """
+        View rendering associated classes of className.
+        """
         conn = self.conn
-        classNames = None
-        with self.renderer('associated_classes.mako',
-                className=className) as r:
-            cns = conn.References(ObjectName=className, IncludeQualifiers=True)
-            cns.sort()
+        with self.renderer('associated_classes.mako', className=className) \
+                as renderer:
+            class_names = conn.References(
+                    ObjectName=className,
+                    IncludeQualifiers=True)
 
-            hierarchy = []
-            hierarchy = cim_insight.get_all_hierarchy(conn,
-                    self._local.url, self._local.ns, className)
-            lastAssocClass = ''
+            hierarchy = cim_insight.get_all_hierarchy(conn, className)
+            last_assoc_class = ''
             associations = []
-            for cn in cns:
-                klass = cn[1]
-                assocClass = klass.classname
-                resultClass = ''
-                role = ''
-                resultRole = ''
-                roleDescription = ''
-                resultRoleDescription = ''
+            for klass in [cn[1] for cn in sorted(class_names)]:
+                asc = defaultdict(str, assoc_class=klass.classname)
 
-                # to find the resultClass, I have to iterate the properties
+                # to find the result_class, I have to iterate the properties
                 # to a REF that is not className
                 for propname in klass.properties.keys():
                     prop = klass.properties[propname]
-                    if prop.reference_class is not None:
-                        refClass = prop.reference_class
-                        description = ''
-                        if prop.qualifiers.has_key('description'):
-                            description = prop.qualifiers['description'].value
+                    if prop.reference_class is None:
+                        continue
+                    refcls = prop.reference_class
+                    description = ''
+                    if prop.qualifiers.has_key('description'):
+                        description = prop.qualifiers['description'].value
 
-                        if refClass in hierarchy:
-                            if assocClass==lastAssocClass:
-                                if resultClass=='':
-                                    resultClass = refClass
-                                    resultRole = propname
-                                    resultRoleDescription = description
-                                else:
-                                    role = propname
-                                    roleDescription = description
+                    if refcls in hierarchy:
+                        if asc['assoc_class'] == last_assoc_class:
+                            if asc['result_class'] == '':
+                                asc['result_class'] = refcls
+                                asc['result_role'] = propname
+                                asc['result_role_description'] = description
                             else:
-                                if role=='' and refClass in hierarchy:
-                                    role = propname
-                                    roleDescription = description
-                                else:
-                                    resultClass = refClass
-                                    resultRole = propname
-                                    resultRoleDescription = description
+                                asc['role'] = propname
+                                asc['role_description'] = description
                         else:
-                            if resultClass=='':
-                                resultClass = refClass
-                                resultRole = propname
-                                resultRoleDescription = description
-                associations.append(
-                        ( resultClass
-                        , assocClass
-                        , role
-                        , roleDescription
-                        , resultRole
-                        , resultRoleDescription
-                        ))
-                lastAssocClass = assocClass
-            r['associations'] = associations
-        return r.result
+                            if asc['role'] == '' and refcls in hierarchy:
+                                asc['role'] = propname
+                                asc['role_description'] = description
+                            else:
+                                asc['result_class'] = refcls
+                                asc['result_role'] = propname
+                                asc['result_role_description'] = description
+                    else:
+                        if asc['result_class'] == '':
+                            asc['result_class'] = refcls
+                            asc['result_role'] = propname
+                            asc['result_role_description'] = description
+                associations.append(tuple([asc[attr] for attr in (
+                    "result_class", "assoc_class", "role", "role_description",
+                    "result_role", "result_role_description")]))
+                last_assoc_class = asc['assoc_class']
+            renderer['associations'] = associations
+        return renderer.result
 
     @views.html_view()
-    def on_AssociatorNames(self, path):
+    def on_AssociatorNames(self, path):             #pylint: disable=C0103
+        """
+        View rendering associated instance names of path.
+        """
         conn = self.conn
-        with self.renderer('associator_names.mako',
-                className=path.classname) as r:
+        with self.renderer('associator_names.mako', className=path.classname) \
+                as renderer:
             assocs = conn.AssociatorNames(ObjectName=path)
-            groupedAssocs = {}
+            grouped_assocs = defaultdict(list)
             for assoc in assocs:
-                if assoc.classname not in groupedAssocs.keys():
-                    groupedAssocs[assoc.classname] = [assoc]
-                else:
-                    groupedAssocs[assoc.classname].append(assoc)
-            setkeys = groupedAssocs.keys()
-            setkeys.sort()
+                grouped_assocs[assoc.classname].append(assoc)
+            # [(class_name, namespace, [iname1, iname2, ...]]
             instances = []
-            for setkey in setkeys:
-                insts = groupedAssocs[setkey]
-                if len(insts) < 1: continue
+            for setkey in sorted(grouped_assocs.keys()):
+                insts = grouped_assocs[setkey]
+                if len(insts) < 1:
+                    continue
                 infos = []
                 for iname in insts:
                     infos.append(cim_insight.get_inst_info(iname))
-                instances.append((inst.classname, inst.namespace, infos))
-            r['instances'] = instances
-        return r.result
+                instances.append((insts[0].classname,
+                    insts[0].namespace, infos))
+            renderer['instances'] = instances
+        return renderer.result
 
     @views.html_view()
-    def on_CMPIProvider(self, className):
+    def on_CMPIProvider(self, className):           #pylint: disable=C0103
+        """
+        View rendering cmpi provider skeleton in C for class.
+        """
         conn = self.conn
-        with self.renderer('cmpi_provider.mako', className=className) as r:
-            conn.GetClass(ClassName = className, LocalOnly=False,
-                        IncludeClassOrigin=True, IncludeQualifiers=True)
-        return r.result
+        with self.renderer('cmpi_provider.mako', className=className) \
+                as renderer:
+            conn.GetClass(
+                    ClassName=className,
+                    LocalOnly=False,
+                    IncludeClassOrigin=True,
+                    IncludeQualifiers=True)
+        return renderer.result
 
     @views.html_view(http_method=views.POST)
-    def on_CreateInstance(self, className, **params):
-        return self._createOrModifyInstance(className, None, **params)
+    def on_CreateInstance(self, className, **params):   #pylint: disable=C0103
+        """
+        View rendering newly created instance of class with provided params.
+        """
+        return self._create_or_modify_instance(className, None, **params)
 
     @views.html_view()
-    def on_CreateInstancePrep(self, className):
+    def on_CreateInstancePrep(self, className):     #pylint: disable=C0103
+        """
+        View rendering form for creating the new instance of class.
+        """
         conn = self.conn
         with self.renderer('modify_instance_prep.mako',
-                new=True, className=className) as r:
+                new=True, className=className) as renderer:
             klass = conn.GetClass(ClassName=className,
                     LocalOnly=False, IncludeQualifiers=True)
-            r['items'] = sorted(
+            renderer['items'] = sorted(
                 [   cim_insight.get_class_item_details(className, prop)
                 for prop in klass.properties.values()],
                 util.cmp_params(klass))
-        return r.result
+        return renderer.result
 
     @views.html_view()
-    def on_DeleteClass(self, className):
+    def on_DeleteClass(self, className):            #pylint: disable=C0103
+        """
+        View for removal of class.
+        """
         conn = self.conn
-        with self.renderer('delete_class.mako', className=className) as r:
+        with self.renderer('delete_class.mako', className=className) \
+                as renderer:
             conn.DeleteClass(ClassName = className)
-        return r.result
+        return renderer.result
 
     @views.html_view()
-    def on_DeleteInstance(self, path):
+    def on_DeleteInstance(self, path):              #pylint: disable=C0103
+        """
+        View for removal of instance.
+        """
         conn = self.conn
-        with self.renderer('delete_instance.mako',
-                className=path.classname) as r:
-            r['iname'] = cim_insight.get_inst_info(path)
+        with self.renderer('delete_instance.mako', className=path.classname) \
+                as renderer:
+            renderer['iname'] = cim_insight.get_inst_info(path)
             conn.DeleteInstance(path)
-        return r.result
+        return renderer.result
 
     @views.html_view()
-    def on_EnumClassNames(self, className=None, mode=None, instOnly=None):
+    def on_EnumClassNames(self,                     #pylint: disable=C0103
+            className=None,
+            mode=None,
+            instOnly=None):
+        """
+        View for enumerating class names.
+        @param mode can be one of { 'deep', 'flat' }
+        @param instOnly is a boolean saying, whether to show instrumented
+        class names only
+        """
         conn = self.conn
         req = self._local.request
         if mode is None:
@@ -499,10 +645,10 @@ class Yawn(object):
             instOnly = True
 
         if instOnly:
-            return self._enumInstrumentedClassNames()
+            return self._enum_instrumented_class_names()
 
         with self.renderer('enum_class_names.mako',
-                className=className, mode=mode) as r:
+                className=className, mode=mode) as renderer:
             lineage = []
             if className is not None:
                 lineage = [className]
@@ -510,7 +656,7 @@ class Yawn(object):
                 while klass.superclass is not None:
                     lineage.insert(0, klass.superclass)
                     klass = conn.GetClass(ClassName=klass.superclass)
-            r['lineage'] = lineage
+            renderer['lineage'] = lineage
 
             kwargs = { 'DeepInheritance' : mode in ['flat', 'deep'] }
             if className is not None:
@@ -538,118 +684,124 @@ class Yawn(object):
                     if mode != 'flat' and conn.EnumerateClassNames(
                             ClassName=klass.classname):
                         classes[klass.classname] = [True] # has kids
-            r['classes'] = classes
-        return r.result
+            renderer['classes'] = classes
+        return renderer.result
 
     @views.html_view()
-    def on_EnumInstanceNames(self, className):
+    def on_EnumInstanceNames(self, className):      #pylint: disable=C0103
+        """
+        View enumerating instance names of class.
+        """
         conn = self.conn
         with self.renderer('enum_instance_names.mako',
-                className=className) as r:
-            klass = conn.GetClass(className, namespace=self._local.ns,
-                    LocalOnly=False, IncludeQualifiers=True)
-            instNames = conn.EnumerateInstanceNames(ClassName=className)
-            inameDict = pywbem.NocaseDict()
-            for iname in instNames:
-                if iname.classname not in inameDict:
-                    inameDict[iname.classname] = [iname]
+                className=className) as renderer:
+            klass = conn.GetClass(className,
+                    namespace=self._local.namespace,
+                    LocalOnly=False,
+                    IncludeQualifiers=True)
+            inst_names = conn.EnumerateInstanceNames(ClassName=className)
+            iname_dict = pywbem.NocaseDict()
+            for iname in inst_names:
+                if iname.classname not in iname_dict:
+                    iname_dict[iname.classname] = [iname]
                 else:
-                    inameDict[iname.classname].append(iname)
+                    iname_dict[iname.classname].append(iname)
 
             instances = []
-            for cname, inames in sorted(inameDict.items(), key=lambda k: k[0]):
+            for cname, inames in sorted(iname_dict.items(),
+                    key=lambda k: k[0]):
                 infos = []
                 for iname in inames:
                     infos.append(cim_insight.get_inst_info(iname, klass,
                         include_all=True, keys_only=True))
                 instances.append((cname, iname.namespace, infos))
-            r['instances'] = instances
-        return r.result
+            renderer['instances'] = instances
+        return renderer.result
 
     @views.html_view()
-    def on_EnumInstances(self, className):
+    def on_EnumInstances(self, className):          #pylint: disable=C0103
+        """
+        View enumerating instances of class.
+        """
         conn = self.conn
-        with self.renderer('enum_instances.mako', className=className) as r:
+        with self.renderer('enum_instances.mako', className=className) \
+                as renderer:
             insts = conn.EnumerateInstances(
-                    ClassName=className, LocalOnly=False)
+                    ClassName=className,
+                    LocalOnly=False)
 
             ccache = pywbem.NocaseDict()
             instances = []
             for inst in insts:
-                i = {}
                 try:
                     klass = ccache[inst.path.classname]
                 except KeyError:
                     klass = conn.GetClass(inst.path.classname, LocalOnly=False)
                     ccache[inst.path.classname] = klass
-                i = cim_insight.get_inst_info(inst, klass, include_all=True)
-                instances.append(i)
-                r['instances'] = instances
-        return r.result
+                instances.append(cim_insight.get_inst_info(
+                    inst, klass, include_all=True))
+                renderer['instances'] = instances
+        return renderer.result
 
-    @views.html_view(require_ns=False)
-    def on_EnumNamespaces(self):
+    @views.html_view(require_namespace=False)
+    def on_EnumNamespaces(self):                    #pylint: disable=C0103
+        """
+        View enumerating namespaces.
+        They are obtained by enumerating instace names of CIM_Namespace class
+        or similar -- depending on which is available on broker.
+        """
         conn = self.conn
-        nsinsts = []
-        with self.renderer('enum_namespaces.mako', namespaces=[]) as r:
-            for nsclass in ['CIM_Namespace', '__Namespace']:
-                for interopns in ['root/cimv2', 'Interop', 'interop', 'root',
-                        'root/interop']:
-                    try:
-                        nsinsts = conn.EnumerateInstanceNames(nsclass,
-                                namespace = interopns)
-                    except pywbem.CIMError, arg:
-                        if arg[0] in [pywbem.CIM_ERR_INVALID_NAMESPACE,
-                                      pywbem.CIM_ERR_NOT_SUPPORTED,
-                                      pywbem.CIM_ERR_INVALID_CLASS]:
-                            continue
-                        else:
-                            raise
-                    if len(nsinsts) == 0:
-                        continue
-                    break
-                if len(nsinsts) == 0:
-                    continue
-                break
-
+        with self.renderer('enum_namespaces.mako', namespaces=[]) as renderer:
+            interopns, _, nsinsts = self._enum_namespaces()
             if len(nsinsts) == 0:
-                return r.result
+                return renderer.result
+
             nslist = [inst['Name'].strip('/') for inst in nsinsts]
             if interopns not in nslist:
-            # Pegasus didn't get the memo that namespaces aren't hierarchical
-            # This will fall apart if there exists a namespace
-            # <interopns>/<interopns>
-            # Maybe we should check the Server: HTTP header instead.
+                # Pegasus didn't get the memo that namespaces aren't
+                # hierarchical
+                # This will fall apart if there exists a namespace
+                # <interopns>/<interopns>
+                # Maybe we should check the Server: HTTP header instead.
                 nslist = [interopns+'/'+subns for subns in nslist]
                 nslist.append(interopns)
             nslist.sort()
-            r['namespaces'] = nslist
+            renderer['namespaces'] = nslist
             if 'root/PG_InterOp' in nslist:
-                r['nsd'] = dict([(x, 0) for x in nslist])
+                renderer['nsd'] = dict([(x, 0) for x in nslist])
                 caps = conn.EnumerateInstances('PG_ProviderCapabilities',
                         namespace='root/PG_InterOp',
                         PropertyList=['Namespaces'])
                 for cap in caps:
                     for _ns in cap['Namespaces']:
                         try:
-                            r['nsd'][_ns] += 1
+                            renderer['nsd'][_ns] += 1
                         except KeyError:
                             pass
             else:
-                r['nsd'] = {}
-        return r.result
+                renderer['nsd'] = {}
+        return renderer.result
 
     @views.html_view(http_method=views.GET_AND_POST)
-    def on_FilteredReferenceNames(self, path,
-            assocCall=None, assocClass="",
-            resultClass="", role="", resultRole="", properties=""):
+    def on_FilteredReferenceNames(self, path,       #pylint: disable=C0103
+            assocCall=None,
+            assocClass="",
+            resultClass="",
+            role="",
+            resultRole="",
+            properties=""):
+        """
+        View rendering instance names of classes referencing path.
+        @param assocCall is one of ASSOC_CALLS; this determines, what
+        operation will be invoked
+        """
         conn = self.conn
         if assocCall is None:
             raise BadRequest('missing "assocCall" argument')
-        if assocCall.lower() not in assoc_calls:
+        if assocCall.lower() not in ASSOC_CALLS:
             raise BadRequest('assocCall must be one of: [%s]'%
-                    ', '.join(assoc_calls))
-        assocCall = assoc_calls.index(assocCall.lower())
+                    ', '.join(ASSOC_CALLS))
+        assocCall = ASSOC_CALLS.index(assocCall.lower())
 
         params = {}
         if assocClass:
@@ -668,79 +820,95 @@ class Yawn(object):
                 , AC_ASSOCIATOR_NAMES : 'AssociatorNames'
                 , AC_REFERENCES       : 'References'
                 , AC_REFERENCE_NAMES  : 'ReferenceNames' }
-        with self.renderer('filetered_reference_names.mako',
+        with self.renderer('filtered_reference_names.mako',
                 className        = path.classname,
-                assoc_call       = assoc_calls[assocCall],
-                assoc_call_label = assoc_call_labels[assocCall],
+                assoc_call       = ASSOC_CALLS[assocCall],
+                assoc_call_label = ASSOC_CALL_LABELS[assocCall],
                 assoc_class      = assocClass,
                 result_class     = resultClass,
                 role             = role,
                 result_role      = resultRole,
-                properties       = properties) as r:
+                properties       = properties) as renderer:
             objs = getattr(conn, funcs[assocCall])(ObjectName=path, **params)
 
-            for o in objs:
+            for i in objs:
+                path = i if isinstance(i, pywbem.CIMInstanceName) else i.path
                 klass = conn.GetClass(
-                        ClassName=o.path.classname,
-                        namespace=o.path.namespace,
+                        ClassName=path.classname,
+                        namespace=path.namespace,
                         LocalOnly=False, IncludeQualifiers=True)
                 keys_only = not assocCall in (AC_ASSOCIATORS, AC_REFERENCES)
-                results.append(cim_insight.get_inst_info(o, klass,
+                results.append(cim_insight.get_inst_info(i, klass,
                     include_all=True, keys_only=keys_only))
-            r['results'] = results
-        return r.result
+            renderer['results'] = results
+        return renderer.result
 
     @views.html_view()
-    def on_FilteredReferenceNamesDialog(self, path):
+    def on_FilteredReferenceNamesDialog(self, path):    #pylint: disable=C0103
+        """
+        View rendering form for filtering objects referencing path.
+        """
         return self.renderer('filtered_reference_names_dialog.mako',
                 path       = path,
                 className  = path.classname,
                 iname      = cim_insight.get_inst_info(path)).result
 
     @views.html_view()
-    def on_GetClass(self, className):
+    def on_GetClass(self, className):               #pylint: disable=C0103
+        """
+        View rendering class details.
+        """
         conn = self.conn
-        with self.renderer('get_class.mako', className=className) as r:
-            klass = conn.GetClass(ClassName=className, LocalOnly=False,
-                    IncludeClassOrigin=True, IncludeQualifiers=True)
-            r['super_class'] = klass.superclass
-            r['aggregation'] = klass.qualifiers.has_key('aggregation')
-            r['association'] = klass.qualifiers.has_key('association')
+        with self.renderer('get_class.mako', className=className) as renderer:
+            klass = conn.GetClass(
+                    ClassName=className,
+                    LocalOnly=False,
+                    IncludeClassOrigin=True,
+                    IncludeQualifiers=True)
+            renderer['super_class'] = klass.superclass
+            renderer['aggregation'] = klass.qualifiers.has_key('aggregation')
+            renderer['association'] = klass.qualifiers.has_key('association')
             if klass.qualifiers.has_key('description'):
-                r['description'] = klass.qualifiers['description'].value
+                renderer['description'] = klass.qualifiers['description'].value
             else:
-                r['description'] = None
+                renderer['description'] = None
             if klass.qualifiers:
-                r['qualifiers'] = [ (q.name, render.val2str(q.value))
+                renderer['qualifiers'] = [ (q.name, render.val2str(q.value))
                         for q in klass.qualifiers.values()
                         if  q.name.lower() != 'description']
             else:
-                r['qualifiers'] = []
+                renderer['qualifiers'] = []
 
             items =  []
             for item in chain( klass.methods.values()
                              , klass.properties.values()):
                 items.append(cim_insight.get_class_item_details(
                     className, item))
-            r['items'] = sorted(items, util.cmp_params(klass))
-        return r.result
+            renderer['items'] = sorted(items, util.cmp_params(klass))
+        return renderer.result
 
     @views.html_view(http_method=views.GET_AND_POST)
-    def on_GetInstance(self, className=None, path=None, **params):
+    def on_GetInstance(self,                        #pylint: disable=C0103
+            className=None,
+            path=None,
+            **params):
+        """
+        View rendering instance details.
+        All instance property values should be prefixed with "propname.".
+        """
         if className is None and path is None:
             raise ValueError("either className or path must be given")
         if className is None:
             className = path.classname
         conn = self.conn
-        with self.renderer('get_instance.mako', className=className) as r:
+        with self.renderer('get_instance.mako', className=className) \
+                as renderer:
             klass = conn.GetClass(ClassName=className,
                     LocalOnly=False, IncludeQualifiers=True)
             if path is None:
                 in_params = {}
 
-                # Remove 'PropName.' prefix from param names.
-
-                log.error('params: {}'.format(params))
+                _LOG.error('params: {}'.format(params))
                 classes = {className : klass}
                 for prop in cim_insight.get_class_props(klass, keys_only=True):
                     if isinstance(prop["type"], dict):
@@ -752,42 +920,56 @@ class Yawn(object):
                             classes[ref_class.classname] = ref_class
                         else:
                             ref_class = classes[prop['type']['className']]
-                        prop['type']['keys'] = pywbem.NocaseDict(dict((p['name'], p)
+                        prop['type']['keys'] = pywbem.NocaseDict(
+                                    dict((p['name'], p)
                                 for p in cim_insight.get_class_props(
                                     ref_class, keys_only=True)))
 
                     try:
                         value = inputparse.formvalue2cimobject(
                                 prop, 'propname.', params,
-                                namespace=self._local.ns)
-                    except inputparse.ReferenceDecodeError as e:
-                        log.error('Invalid argument: %s'%e)
-                        r['invalid_argument'] = str(e)
-                    if value is None: continue
+                                namespace=self._local.namespace)
+                    except inputparse.ReferenceDecodeError as exp:
+                        _LOG.error('Invalid argument: %s'%exp)
+                        renderer['invalid_argument'] = str(exp)
+                    if value is None:
+                        continue
                     in_params[prop['name']] = value
                 path = pywbem.CIMInstanceName(className,
-                        keybindings=in_params, namespace=self._local.ns)
+                        keybindings=in_params, namespace=self._local.namespace)
             inst = conn.GetInstance(InstanceName=path, LocalOnly = False)
-            r['instance'] = cim_insight.get_inst_info(inst, klass)
-        return r.result
+            renderer['instance'] = cim_insight.get_inst_info(inst, klass)
+        return renderer.result
 
     @views.html_view()
-    def on_GetInstD(self, className):
+    def on_GetInstD(self, className):               #pylint: disable=C0103
+        """
+        View rendering form allowing user to fill in property values in
+        order to get instance.
+        """
         conn = self.conn
-        with self.renderer('get_instance_dialog.mako',
-                className=className) as r:
-            klass = conn.GetClass(ClassName=className, LocalOnly=False,
+        with self.renderer('get_instance_dialog.mako', className=className) \
+                as renderer:
+            klass = conn.GetClass(ClassName=className,
+                    LocalOnly=False,
                     IncludeQualifiers=True)
 
-            items = [   cim_insight.get_class_item_details(className, i)
+            items = [    cim_insight.get_class_item_details(className, i)
                 for i in sorted( klass.properties.values()
                                , key=lambda a: a.name)
                 if  i.qualifiers.has_key('key') ]
-            r['items'] = items
-        return r.result
+            renderer['items'] = items
+        return renderer.result
 
     @views.html_view(http_method=views.POST)
-    def on_InvokeMethod(self, method, path=None, className=None, **params):
+    def on_InvokeMethod(self, method,               #pylint: disable=C0103
+            path=None,
+            className=None,
+            **params):
+        """
+        View for invoking method of class or instance and displaying
+        results.
+        """
         if path is None and className is None:
             raise ValueError("either object path or className argument must"
                     " be given")
@@ -796,15 +978,12 @@ class Yawn(object):
             className = path.classname
         if (   isinstance(path, pywbem.CIMInstanceName)
            and path.namespace is None):
-            path.namespace = self._local.ns
+            path.namespace = self._local.namespace
 
         with self.renderer('invoke_method.mako',
-                className=className, method_name=method) as r:
+                className=className, method_name=method) as renderer:
             klass = conn.GetClass(ClassName = className, LocalOnly=False)
             cimmethod = klass.methods[method]
-
-            in_values  = defaultdict(str)
-            out_values = defaultdict(str)
 
             in_params = {}
 
@@ -812,47 +991,46 @@ class Yawn(object):
                     className, cimmethod)
 
             classes = {className : klass}
-            for p in tmpl_in_params:
-                if isinstance(p["type"], dict):
-                    if not p['type']['className'] in classes:
+            for param in tmpl_in_params:
+                if isinstance(param["type"], dict):
+                    if not param['type']['className'] in classes:
                         ref_class = conn.GetClass(
-                                    ClassName=p['type']['className'],
+                                    ClassName=param['type']['className'],
                                     LocalOnly=False,
                                     IncludeQualifiers=True)
                         classes[ref_class.classname] = ref_class
                     else:
-                        ref_class = classes[p['type']['className']]
-                    p['type']['keys'] = pywbem.NocaseDict(
-                                dict((p['name'], p)
-                            for p in cim_insight.get_class_props(
+                        ref_class = classes[param['type']['className']]
+                    param['type']['keys'] = pywbem.NocaseDict(
+                                dict((param['name'], param)
+                            for param in cim_insight.get_class_props(
                                 ref_class, keys_only=True)))
-                value = inputparse.formvalue2cimobject(p, 'methparam.',
+                value = inputparse.formvalue2cimobject(param, 'methparam.',
                         pywbem.NocaseDict(params))
-                if isinstance(p['type'], dict):
-                    p['value'] = value
+                if isinstance(param['type'], dict):
+                    param['value'] = value
                 else:
-                    p['value'] = render.val2str(value)
+                    param['value'] = render.val2str(value)
                 if value is not None:
-                    in_params[p['name']] = value
-            r['in_params'] = tmpl_in_params
+                    in_params[param['name']] = value
+            renderer['in_params'] = tmpl_in_params
 
             (rval, out_params) = conn.InvokeMethod(
                     MethodName = method,
                     ObjectName = className if path is None else path,
                     **in_params)
-            out_values = {}
             if out_params:
-                for p in tmpl_out_params:
-                    value = out_params[p['name']]
-                    if isinstance(p['type'], dict):
-                        p['value'] = value
+                for param in tmpl_out_params:
+                    value = out_params[param['name']]
+                    if isinstance(param['type'], dict):
+                        param['value'] = value
                     else:
-                        p['value'] = render.val2str(value)
-            r['out_params'] = tmpl_out_params
+                        param['value'] = render.val2str(value)
+            renderer['out_params'] = tmpl_out_params
 
-            r['iname'] = None
+            renderer['iname'] = None
             if path is not None:
-                r['iname'] = cim_insight.get_inst_info(path, klass)
+                renderer['iname'] = cim_insight.get_inst_info(path, klass)
 
             out = cim_insight.get_class_item_details(
                     className, cimmethod, path)
@@ -865,20 +1043,28 @@ class Yawn(object):
                 out['value'] = rval
             else:
                 out['value'] = render.val2str(rval)
-            r['return_value'] = out
+            renderer['return_value'] = out
 
-        return r.result
+        return renderer.result
 
-    @views.html_view(http_method=views.POST, require_url=False, require_ns=False,
+    @views.html_view(
+            http_method=views.POST,
+            require_url=False,
+            require_namespace=False,
             returns_response=True)
-    def on_Login(self, **kwargs):
+    def on_Login(self, **kwargs):               #pylint: disable=C0103
+        """
+        View handling user informations from index page and showing
+        enumeration of namespaces or class names, depending on user's
+        arguments.
+        """
         try:
             scheme, host, port = [kwargs[k] for k in (
                 "scheme", "host", "port")]
         except KeyError:
             raise BadRequest(
                     "missing one of ['scheme', 'host', 'port'] arguments")
-        ns = kwargs.get('ns', getattr(self._local, 'ns', None))
+        namespace = kwargs.get('ns', getattr(self._local, 'namespace', None))
         url = scheme+'://'+host
         if not (  (scheme == 'https' and port == '5989')
                or (scheme == 'http' and port == '5988')):
@@ -886,36 +1072,49 @@ class Yawn(object):
         if host[0] == '/':
             url = host
         self._local.url = url
-        self._local.ns = ns
-        if ns:
+        self._local.namespace = namespace
+        if namespace:
             return self.on_EnumClassNames()
         return self.on_EnumNamespaces()
 
-    @views.html_view(require_url=False, require_ns=False)
-    def on_Logout(self):
+    @views.html_view(require_url=False, require_namespace=False)
+    def on_Logout(self):                        #pylint: disable=C0103
+        """
+        View used to log user out.
+        """
         # Enable the client to reauthenticate, possibly as a new user
         self.response.set_cookie('yawn_logout', "true",
                 path=util.base_script(self._local.request))
         return self.renderer('logout.mako').result
 
     @views.html_view(http_method=views.POST)
-    def on_ModifyInstance(self, path, **params):
-        return self._createOrModifyInstance(path.classname, path, **params)
+    def on_ModifyInstance(self, path, **params):    #pylint: disable=C0103
+        """
+        View used to modify existing instance and rendering the result.
+        """
+        return self._create_or_modify_instance(path.classname, path, **params)
 
     @views.html_view(http_method=views.GET_AND_POST)
-    def on_ModifyInstPrep(self, path):
+    def on_ModifyInstPrep(self, path):          #pylint: disable=C0103
+        """
+        View rendering form allowing to modify existing instance.
+        """
         conn = self.conn
         with self.renderer('modify_instance_prep.mako',
-                new=False, className=path.classname) as r:
+                new=False, className=path.classname) as renderer:
             klass = conn.GetClass(ClassName=path.classname,
                     LocalOnly=False, IncludeQualifiers=True)
             inst  = conn.GetInstance(InstanceName=path,
                     LocalOnly=False, IncludeQualifiers=True)
-            r['instance'] = cim_insight.get_inst_info(inst, klass)
-        return r.result
+            renderer['instance'] = cim_insight.get_inst_info(inst, klass)
+        return renderer.result
 
-    @views.html_view(require_url=False, require_ns=False)
-    def on_Pickle(self, path):
+    @views.html_view(require_url=False, require_namespace=False)
+    def on_Pickle(self, path):                  #pylint: disable=C0103
+        """
+        View rendering instance name in various formats, that can be used
+        as arguments to various views.
+        """
         return self.renderer('pickle.mako',
                 className      = path.classname,
                 str_obj        = str(path),
@@ -923,7 +1122,13 @@ class Yawn(object):
                 xml_obj        = path.tocimxml().toprettyxml()).result
 
     @views.html_view()
-    def on_PrepMethod(self, method, path=None, className=None):
+    def on_PrepMethod(self, method,             #pylint: disable=C0103
+            path=None,
+            className=None):
+        """
+        View rendering form for method invocation on particular instance
+        name of class.
+        """
         if path is None and className is None:
             raise ValueError("either object path or className argument must"
                     " be given")
@@ -931,36 +1136,45 @@ class Yawn(object):
             className = path.classname
         conn = self.conn
         with self.renderer('prep_method.mako',
-                className=className, method_name=method) as r:
+                className=className, method_name=method) as renderer:
             klass = conn.GetClass(ClassName = className, LocalOnly=False,
                     IncludeQualifiers=True)
 
             cimmethod = klass.methods[method]
-            r['in_params'], r['out_params'] = cim_insight.get_method_params(
-                    className, cimmethod)
-            r['iname'] = None
+            renderer['in_params'], renderer['out_params'] = (
+                    cim_insight.get_method_params(className, cimmethod))
+            renderer['iname'] = None
             if path is not None:
-                r['iname'] = cim_insight.get_inst_info(path, klass,
+                renderer['iname'] = cim_insight.get_inst_info(path, klass,
                         include_all=True, keys_only=True)
-            r['return_type'] = cimmethod.return_type
-        return r.result
+            renderer['return_type'] = cimmethod.return_type
+        return renderer.result
 
     @views.html_view()
-    def on_PyProvider(self, className):
+    def on_PyProvider(self, className):         #pylint: disable=C0103
+        """
+        View rendering python provider code for paricular class.
+        """
         conn = self.conn
-        with self.renderer('py_provider.mako', className=className) as r:
+        with self.renderer('py_provider.mako', className=className) \
+                as renderer:
             klass = conn.GetClass(ClassName = className, LocalOnly=False,
                         IncludeClassOrigin=True, IncludeQualifiers=True)
-            r['code'], r['mof'] = codegen(klass)
-        return r.result
+            renderer['code'], renderer['mof'] = codegen(klass)
+        return renderer.result
 
     @views.html_view(http_method=views.POST)
-    def on_Query(self, query=None, lang=QLangConverter.QLANG_WQL):
+    def on_Query(self,                          #pylint: disable=C0103
+            query=None,
+            lang=QLangConverter.QLANG_WQL):
+        """
+        View rendering result of query.
+        """
         conn = self.conn
         if query is None:
             if "query" not in self._local.request.form:
                 raise ValueError("missing query string argument")
-            query = request.form["query"]
+            query = self._local.request.form["query"]
         if isinstance(lang, int):
             lang = QLangConverter.query_languages[QLangConverter.QLANG_WQL]
         elif isinstance(lang, basestring):
@@ -971,31 +1185,35 @@ class Yawn(object):
             raise TypeError("lang must be either string or integer not: {}".
                     format(lang.__class__.__name__))
 
-        with self.renderer('query.mako', qlang=lang, query=query) as r:
+        with self.renderer('query.mako', qlang=lang, query=query) as renderer:
             insts = conn.ExecQuery(QueryLanguage=lang,
-                    Query=query, namespace=self._local.ns)
+                    Query=query, namespace=self._local.namespace)
             results = []
             ccache = pywbem.NocaseDict()
             for inst in insts:
-                cn = inst.path.classname
+                clsname = inst.path.classname
                 try:
-                    klass = ccache[cn]
+                    klass = ccache[clsname]
                 except KeyError:
-                    klass = ccache[cn] = conn.GetClass(cn, LocalOnly=False)
+                    klass = ccache[clsname] = conn.GetClass(
+                            clsname, LocalOnly=False)
                 results.append(cim_insight.get_inst_info(inst, klass,
                     include_all=True, keys_only=True))
-            r['results'] = results
-        return r.result
+            renderer['results'] = results
+        return renderer.result
 
     @views.html_view()
-    def on_QueryD(self, className=''):
+    def on_QueryD(self, className=''):          #pylint: disable=C0103
+        """
+        View rendering form for query.
+        """
         return self.renderer('query_dialog.mako', className=className).result
 
     @views.html_view()
-    def on_ReferenceNames(self, path):
-        """ The goal here is to list InstPaths to all related objects, grouped
-        in the
-         following manner:
+    def on_ReferenceNames(self, path):          #pylint: disable=C0103
+        """
+        The goal here is to list InstPaths to all related objects, grouped
+        in the following manner:
          - Assoc Class Name
            - Role of related object
              - Type of object (its classname)
@@ -1010,62 +1228,76 @@ class Yawn(object):
          - Another Assoc Class Name
            - Role
              - ...
-         Known bugs: if an assoc class has a key property of type other than
-         REF, we'll probably blow up.  We also won't follow non-key REF
-         properties (if there are such things)
+        Known bugs: if an assoc class has a key property of type other than
+        REF, we'll probably blow up.  We also won't follow non-key REF
+        properties (if there are such things)
         """
         conn = self.conn
         with self.renderer('reference_names.mako',
-                iname=cim_insight.get_inst_info(path)) as r:
+                iname=cim_insight.get_inst_info(path)) as renderer:
             # TODO remove this namespace hack when pywbem is fixed
             oldns = path.namespace
             path.namespace = None
             refs = conn.ReferenceNames(ObjectName=path)
-            path.namespace = oldns is not None and oldns or self._local.ns
+            path.namespace = (  oldns is not None and oldns
+                             or self._local.namespace)
 
-            refdict = {}
+            # { association_class_name :
+            #   { role_string : 
+            #     { role_class_name : [role_instance_name, ...]
+            #     , ... }
+            #   , ... }
+            # , ... }
+            refdict = util.rdefaultdict()
             for ref in refs:
-                refInstPath = ref
-                assocClassName = refInstPath.classname
-                if assocClassName not in refdict.keys():
-                    refdict[assocClassName] = {}
-                for role in refInstPath.keys():
-                    roleInstPath = refInstPath[role]
-                    if roleInstPath == path:
+                ref_iname = ref
+                assoc_cname = ref_iname.classname
+                for role in ref_iname.keys():
+                    role_iname = ref_iname[role]
+                    if role_iname == path:
                         continue
-                    if role not in refdict[assocClassName]:
-                        refdict[assocClassName][role] = {}
-                    roleClassName = roleInstPath.classname
-                    if roleClassName not in refdict[assocClassName][role]:
-                        refdict[assocClassName][role][roleClassName] = []
-                    refdict[assocClassName][role][roleClassName].append(
-                            roleInstPath)
-            r['associations'] = sorted(refdict.keys())
+                    role_cname = role_iname.classname
+                    if role_cname not in refdict[assoc_cname][role]:
+                        refdict[assoc_cname][role][role_cname] = []
+                    refdict[assoc_cname][role][role_cname].append(
+                            role_iname)
+            renderer['associations'] = sorted(refdict.keys())
 
-            refmap = {}
-            for assoc, roles in sorted(refdict.items(), key=lambda i: i[0]):
-                rols = refmap[assoc] = []
+            # { accociation_class_name :
+            #   [ (role, [role_iname_info, ... ])
+            #   , ... ]
+            # , ... }
+            refmap = defaultdict(list)
+            for assoc_cname, roles in sorted(refdict.items(),
+                    key=lambda i: i[0]):
                 for role, refs in sorted(roles.items(), key=lambda i: i[0]):
-                    if not refs: continue
-                    rs = []
+                    if not refs:
+                        continue
+                    ref_inames = []
                     for cls, ref_paths in sorted(
                             refs.items(), key=lambda i: i[0]):
                         rfs = [   cim_insight.get_inst_info(p)
                               for p in sorted(ref_paths) ]
-                        rs.append((cls, p.namespace, rfs))
-                    rols.append((role, rs))
-            r['refmap'] = refmap
+                        ref_inames.append((cls, ref_paths[0].namespace, rfs))
+                    refmap[assoc_cname].append((role, ref_inames))
+            renderer['refmap'] = refmap
 
-        return r.result
+        return renderer.result
 
     @views.json_view
     def on_json_get_class_list(self):
+        """
+        JSON view returning list of class names.
+        """
         klasses = self.conn.EnumerateClassNames(
                 LocalOnly=False, DeepInheritance=True)
         return sorted(klasses)
 
     @views.json_view
     def on_json_get_class_keys(self, className):
+        """
+        JSON view returning list of keys for particular class.
+        """
         klass = self.conn.GetClass(ClassName=className,
                 LocalOnly=False,
                 IncludeQualifiers=True)
@@ -1073,9 +1305,13 @@ class Yawn(object):
 
     @views.json_view
     def on_json_query_instances(self):
+        """
+        JSON view accepting query string in WQL and returning list of matching
+        instance names as json objects.
+        """
         query = self._local.request.args['query']
         insts = self.conn.ExecQuery(QueryLanguage='WQL',
-                Query=query, namespace=self._local.ns)
+                Query=query, namespace=self._local.namespace)
         self.response.headers["content-type"] = "application/json"
         result = []
         klass = None

@@ -16,28 +16,40 @@
 # Authors: Michal Minar <miminar@redhat.com>
 """
 Defines functions for obtaining information from pywbem objects.
+
+YAWN represents CIM objects as dictionaries. These functions make the
+transformation to them.
 """
 
 import pywbem
 from pywbem_yawn import render
 from pywbem_yawn import util
 
-def get_all_hierarchy(conn, url, ns, className):
+def get_all_hierarchy(conn, class_name):
+    """
+    Used only AssociatedClases.
+    TODO: make it part of on_AssociatedClasses
+    """
     hierarchy = []
 
-    hierarchy.append(className)
-    classNameToCheck = className
-    while classNameToCheck != None:
-        subklass = conn.GetClass(classNameToCheck, LocalOnly = False,
+    hierarchy.append(class_name)
+    cname = class_name
+    while cname != None:
+        subklass = conn.GetClass(cname, LocalOnly=False,
                 IncludeQualifiers=True)
         if subklass.superclass != None:
-            classNameToCheck = subklass.superclass
-            hierarchy.append(classNameToCheck)
+            cname = subklass.superclass
+            hierarchy.append(cname)
         else:
-            classNameToCheck = None
+            cname = None
     return hierarchy
 
 def _get_prop_value(prop, inst=None):
+    """
+    @param prop is either pywbem.CIMParameter or pywbem.CIMProperty
+    @inst can be pywbem.CIMInstance or pywbem.CIMInstanceName
+    @return value of property depending on supplied parameters
+    """
     if isinstance(prop, pywbem.CIMParameter):
         return prop.value
     if inst is not None:
@@ -52,31 +64,72 @@ def _get_prop_value(prop, inst=None):
     return None
 
 def _get_prop_type(prop, inst=None):
+    """
+    @param prop is either pywbem.CIMParameter or pywbem.CIMProperty
+    @inst can be pywbem.CIMInstance or pywbem.CIMInstanceName
+    @return type of property, which can be:
+           dictionary representing reference to object name
+             containg ( 'className', 'ns' ) keys
+           string representing any other type
+    """
     value = _get_prop_value(prop, inst)
-    t = '<UNKNOWN>'
+    res = '<UNKNOWN>'
     if (   prop.reference_class is None
        and (  prop.type != 'reference'
            or not isinstance(value, pywbem.CIMInstanceName))):
-        t = prop.type
+        res = prop.type
     else:
-        t = {'className' : None }
+        res = {'className' : None }
         if prop.reference_class is not None:
-            t['className'] = prop.reference_class
+            res['className'] = prop.reference_class
         else:
             if isinstance(value, list):
                 value = value[0] if len(value) else None
             if isinstance(value, pywbem.CIMInstanceName):
-                t['className'] = value.classname
-                t['ns'] = value.namespace
-    return t
+                res['className'] = value.classname
+                res['ns'] = value.namespace
+    return res
+
+def _get_default_attributes_dict(name, **kwargs):
+    """
+    @param kwargs any initial item values can be passed in this
+    argument
+    @return dictionary with default properties of any attribute
+    of CIM class, instance or instance name
+    """
+    if not isinstance(name, basestring):
+        raise TypeError("name must be string")
+    res = { 'name'         : name
+          , 'is_deprecated': False
+          # whether the item is declared be current class or
+          # by some parent class
+          , 'is_local'     : False
+          # class, that defines this item (may be None)
+          , 'class_origin' : None
+          , 'is_key'       : False
+          , 'is_array'     : False
+          , 'is_method'    : False
+          , 'is_required'  : False
+          , 'is_valuemap'  : False
+          , 'valuemap'     : []
+          , 'values'       : {}
+          , 'array_size'   : None
+          , 'value'        : None
+          , 'value_orig'   : None
+          # only valid for method
+          , 'args'         : []
+          , 'type'         : "<Unknown>"
+          # all less interesting qualifiers sorted by name
+          , 'qualifiers'   : []
+          }
+    res.update(kwargs)
+    return res
 
 def _get_property_details(prop, inst=None):
     """
-    This should be used only by functions get_class_item_details
-    and get_class_props
-
     @param prop is either CIMProperty or CIMParameter
     @param inst is either CIMInstance or CIMInstanceName
+    @return dictionary describing property
     """
     if not isinstance(prop, (pywbem.CIMProperty, pywbem.CIMParameter)):
         raise TypeError('prop must be either CIMProperty or CIMParameter')
@@ -87,61 +140,60 @@ def _get_property_details(prop, inst=None):
                ' CIMInstanceName, None')
     value = _get_prop_value(prop, inst)
 
-    i = { 'valuemap'     : []
-        # string represantations of values in valuemap
-        , 'values'       : {}
-        }
-    i['is_key'] = prop.qualifiers.has_key('key')
-    if prop.is_array:
-        i['is_array'] = prop.is_array
-        i['array_size'] = prop.array_size
-    i['type'] = _get_prop_type(prop, inst)
+    res = _get_default_attributes_dict(prop.name,
+            is_key     = prop.qualifiers.has_key('key'),
+            type       = _get_prop_type(prop, inst),
+            value_orig = value)
 
-    i['value_orig'] = value
+    if prop.is_array:
+        res['is_array'] = prop.is_array
+        res['array_size'] = prop.array_size
+
     if value is not None:
         if (   prop.qualifiers.has_key('values')
            and prop.qualifiers.has_key('valuemap')):
-            i['value'] = render.mapped_value2str(value, prop.qualifiers)
+            res['value'] = render.mapped_value2str(value, prop.qualifiers)
         elif prop.reference_class is not None:
-            i['value'] = value
+            res['value'] = value
         else:
-            i['value'] = render.val2str(value)
+            res['value'] = render.val2str(value)
 
     if prop.qualifiers.has_key('valuemap'):
-        i['is_valuemap'] = True
+        res['is_valuemap'] = True
         valmap_quals = prop.qualifiers['valuemap'].value
         values_quals = None
         if prop.qualifiers.has_key('values'):
             values_quals = prop.qualifiers['values'].value
         for ivq, val in enumerate(valmap_quals):
-            try: pywbem.tocimobj(prop.type, val)
-            except:
+            try:
+                pywbem.tocimobj(prop.type, val)
+            except Exception:
                 # skip valuemap items that aren't valid values
                 # such as the numeric ranges for DMTF Reserved and whatnot
                 continue
-            i['valuemap'].append(val)
+            res['valuemap'].append(val)
             if values_quals and ivq < len(values_quals):
-                i['values'][val] = [values_quals[ivq]]
+                res['values'][val] = [values_quals[ivq]]
             else:
-                i['values'][val] = None
+                res['values'][val] = None
 
     if isinstance(prop, pywbem.CIMParameter):
         # TODO is IN assumed to be true if the IN qualifier is missing?
-        i['in'] = (  not prop.qualifiers.has_key('in')
+        res['in'] = (  not prop.qualifiers.has_key('in')
                   or prop.qualifiers['in'].value)
-        i['out'] = (  prop.qualifiers.has_key('out')
+        res['out'] = (  prop.qualifiers.has_key('out')
                    and prop.qualifiers['out'].value)
 
-    return i
+    return res
 
-def get_class_item_details(className, item, inst=None):
+def get_class_item_details(class_name, item, inst=None):
     """
     @param item can be one of {
         CIMProperty, CIMMethod, CIMParameter }
     @param inst provides some additional info (if given)
     """
-    if not isinstance(className, basestring):
-        raise TypeError('className must be a string')
+    if not isinstance(class_name, basestring):
+        raise TypeError('class_name must be a string')
     if not isinstance(item, (pywbem.CIMProperty, pywbem.CIMMethod,
             pywbem.CIMParameter)):
         raise TypeError('item must be either CIMProperty,'
@@ -151,48 +203,34 @@ def get_class_item_details(className, item, inst=None):
         raise TypeError('inst must be one of CIMInstanceName'
             ', CIMInstance or None')
 
-    i = { 'name'         : item.name
-        , 'is_deprecated': item.qualifiers.has_key('deprecated')
-        # whether the item is declared be current class or
-        # by some parent class
-        , 'is_local'     : False
-        # class, that defines this item (may be None)
-        , 'class_origin' : None
-        , 'is_key'       : False
-        , 'is_array'     : False
-        , 'is_method'    : isinstance(item, pywbem.CIMMethod)
-        , 'is_required'  : item.qualifiers.has_key('required')
-        , 'is_valuemap'  : item.qualifiers.has_key('valuemap')
-        , 'array_size'   : None
-        , 'value'        : None
-        , 'value_orig'   : None
-        # only valid for method
-        , 'args'         : []
-        , 'type'         : "<Unknown>"
-        # all less interesting qualifiers sorted by name
-        , 'qualifiers'   : []
-        }
+    res = _get_default_attributes_dict(item.name,
+            is_deprecated = item.qualifiers.has_key('deprecated'),
+            is_method     = isinstance(item, pywbem.CIMMethod),
+            is_required   = item.qualifiers.has_key('required'),
+            is_valuemap   = item.qualifiers.has_key('valuemap'))
 
     if hasattr(item, 'class_origin'):
-        i['is_local'] = item.class_origin == className
-        i['class_origin'] = item.class_origin
+        res['is_local'] = item.class_origin == class_name
+        res['class_origin'] = item.class_origin
     if item.qualifiers.has_key('description'):
-        i['description'] = item.qualifiers['description'].value
+        res['description'] = item.qualifiers['description'].value
     else:
-        i['description'] = None
-    for q in sorted(item.qualifiers.values(), key=lambda v: v.name):
-        if q.name.lower() in ('description', 'deprecated', 'key', 'required'):
+        res['description'] = None
+    for qualifier in sorted(item.qualifiers.values(), key=lambda v: v.name):
+        if qualifier.name.lower() in (
+                'description', 'deprecated', 'key', 'required'):
             continue
-        i['qualifiers'].append((q.name, render.val2str(q.value)))
+        res['qualifiers'].append(
+                (qualifier.name, render.val2str(qualifier.value)))
     if isinstance(item, (pywbem.CIMProperty, pywbem.CIMParameter)):
-        i.update(_get_property_details(item, inst))
+        res.update(_get_property_details(item, inst))
 
     elif isinstance(item, pywbem.CIMMethod): # CIMMethod
-        i['type'] = item.return_type
-        args = i['args']
-        for p in item.parameters.values():
-            args.append(get_class_item_details(className, p))
-    return i
+        res['type'] = item.return_type
+        args = res['args']
+        for parameter in item.parameters.values():
+            args.append(get_class_item_details(class_name, parameter))
+    return res
 
 def get_class_props(klass=None, inst=None, include_all=False, keys_only=False):
     """
@@ -220,7 +258,7 @@ def get_class_props(klass=None, inst=None, include_all=False, keys_only=False):
     if property is not in schema, then type is None and the rest
         of fields are undefined
     if type of property is reference, then:
-        type  = {ns : namespace, className: className}
+        type  = {ns : namespace, className: class_name}
         value = object_path object
     """
     if klass is not None and not isinstance(klass, pywbem.CIMClass):
@@ -255,32 +293,24 @@ def get_class_props(klass=None, inst=None, include_all=False, keys_only=False):
                 if klass and klass.properties.has_key(prop_name) else None)
         if keys_only and cprop and not cprop.qualifiers.has_key('key'):
             continue
-        p = { 'name'        : prop_name
-            , 'is_key'      : False
-            , 'is_required' : False
-            , 'is_array'    : False
-            , 'description' : None
-            , 'type'        : '<Unknown>'
-            , 'value'       : None
-            , 'value_orig'  : None
-            , 'qualifiers'  : []
-            , 'is_valuemap' : False
-            }
         if cprop is not None:
-            p.update(get_class_item_details(klass.classname, cprop, inst))
+            item = get_class_item_details(klass.classname, cprop, inst)
         elif iprop is not None:
-            p.update(_get_property_details(iprop, inst))
+            item = _get_property_details(iprop, inst)
         elif isinstance(inst, pywbem.CIMInstanceName):
+            item = _get_default_attributes_dict(prop_name)
             if prop_name in inst:
                 value = inst[prop_name]
-                p['is_key']     = True
-                p['is_array']   = isinstance(inst[prop_name], list)
-                p['value']      = value
-                p['value_orig'] = value
+                item['is_key']     = True
+                item['is_array']   = isinstance(inst[prop_name], list)
+                item['value']      = value
+                item['value_orig'] = value
                 if isinstance(value, pywbem.CIMInstanceName):
-                    p['type'] = { 'className' : value.classname
-                                , 'ns'        : value.namespace }
-        props.append(p)
+                    item['type'] = { 'className' : value.classname
+                                   , 'ns'        : value.namespace }
+        else:
+            item = _get_default_attributes_dict(prop_name)
+        props.append(item)
     return props
 
 def get_class_methods(klass):
@@ -298,7 +328,7 @@ def get_class_methods(klass):
 
 def get_inst_info(inst, klass=None, include_all=False, keys_only=False):
     """
-    @return { 'className'  : className
+    @return { 'className'  : class_name
             , 'ns'         : namespace
             , 'path'       : path
             , 'props'      : [ p1dict, ... ]
@@ -319,7 +349,7 @@ def get_inst_info(inst, klass=None, include_all=False, keys_only=False):
         info['methods'] = get_class_methods(klass)
     return info
 
-def get_method_params(className, cimmethod):
+def get_method_params(class_name, cimmethod):
     """
     @return (in_params, out_params)
     where both are list of dictionaries
@@ -330,9 +360,11 @@ def get_method_params(className, cimmethod):
     if not isinstance(cimmethod, pywbem.CIMMethod):
         raise TypeError('cimmethod must be instance of pywbem.CIMMethod')
     for param in cimmethod.parameters.values():
-        details = get_class_item_details(className, param)
-        if details['in']:  in_params.append(details)
-        if details['out']: out_params.append(details)
+        details = get_class_item_details(class_name, param)
+        if details['in']:
+            in_params.append(details)
+        if details['out']:
+            out_params.append(details)
 
     return (in_params, out_params)
 

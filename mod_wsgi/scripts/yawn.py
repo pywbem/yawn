@@ -1,12 +1,18 @@
 #!/usr/bin/env python
+"""
+Script for launching YAWN as a standalone web broswer.
+Note that this is rather for testing purposes, then for production.
+"""
 
 import argparse
 import logging
-import pkg_resources
 from werkzeug.serving import run_simple
 import pywbem_yawn
 
-if __name__ == "__main__":
+def parse_args():
+    """
+    Parses command line arguments.
+    """
     parser = argparse.ArgumentParser(
             description="Yawn standalone daemon.")
     parser.add_argument('-p', '--port',
@@ -31,8 +37,19 @@ if __name__ == "__main__":
     parser.add_argument('-d', '--debug',
             help="enable debugging", dest="debug",
             action='store_true')
-    ns = parser.parse_args()
+    return parser.parse_args()
 
+def run_yawn(hostname, port, log_level,
+        templates=None,
+        modules=None,
+        static_files=None,
+        debug=False):
+    """
+    Uses werkzeug's run_simple function to run YAWN application as a daemon.
+    @param debug whether to turn on werkzeug's debugger upon exception
+    handling
+    TODO: use module directory for real
+    """
     log = logging.getLogger('root')
 
     handler = logging.StreamHandler()
@@ -41,27 +58,29 @@ if __name__ == "__main__":
             "%(asctime)s:%(levelname)s:%(lineno)d - %(message)s")
     handler.setFormatter(formatter)
     log.addHandler(handler)
-    log.setLevel(ns.log_level.upper())
-    log.debug('logging level set to: {}'.format(ns.log_level))
+    log.setLevel(log_level.upper())
+    log.debug('logging level set to: {}'.format(log_level))
 
     ylog = logging.getLogger(pywbem_yawn.__name__)
     ylog.addHandler(handler)
-    ylog.setLevel(ns.log_level.upper())
+    ylog.setLevel(log_level.upper())
 
-    if ns.templates is not None:
-        log.debug('templates directory : {}'.format(ns.templates))
-    if ns.modules is not None:
-        log.debug('modules directory   : {}'.format(ns.modules))
-    sf = ns.static_files
-    if sf is None:
-    # pkg_resources.resource_filename(pywbem_yawn.__name__, 'static')
-        sf = (pywbem_yawn.__name__, 'static')
-    log.debug('static files        : {}'.format(sf))
+    if templates is not None:
+        log.debug('templates directory : {}'.format(templates))
+    if modules is not None:
+        log.debug('modules directory   : {}'.format(modules))
+    if static_files is None:
+        static_files = (pywbem_yawn.__name__, 'static')
+    log.debug('static files        : {}'.format(static_files))
     log.debug('using debugger      : {}'.format(
-        'yes' if ns.debug is True else 'no'))
-    #app = Yawn(templates=ns.templates, modules=ns.modules)
-    app = pywbem_yawn.Yawn(static_prefix='/static', debug=ns.debug)
-    #log.debug('serving on {}:{}'.format(ns.hostname, ns.port))
-    run_simple(ns.hostname, ns.port, app, static_files={ '/static': sf },
-            use_debugger=ns.debug)
+        'yes' if debug is True else 'no'))
+    app = pywbem_yawn.Yawn(static_prefix='/static', debug=debug)
+    return run_simple(hostname,
+            port,
+            app,
+            static_files = { '/static': static_files },
+            use_debugger = debug)
 
+if __name__ == "__main__":
+    ARGS = parse_args()
+    run_yawn(**vars(ARGS))

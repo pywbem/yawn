@@ -1,11 +1,14 @@
 #!/usr/bin/env python
 
+"""
+Wrapper for running YAWN application under web server like
+apache.
+"""
+
 import pywbem_yawn
 from werkzeug.wsgi import SharedDataMiddleware
 
-app = pywbem_yawn.Yawn()
-
 application = SharedDataMiddleware(
-        app,
+        pywbem_yawn.Yawn(),
         { '/static' : (pywbem_yawn.__name__, 'static') })
 
