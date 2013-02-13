@@ -740,7 +740,7 @@ class Yawn(object):
                     ccache[inst.path.classname] = klass
                 instances.append(cim_insight.get_inst_info(
                     inst, klass, include_all=True))
-                renderer['instances'] = instances
+            renderer['instances'] = instances
         return renderer.result
 
     @views.html_view(require_namespace=False)
@@ -1062,6 +1062,8 @@ class Yawn(object):
             scheme, host, port = [kwargs[k] for k in (
                 "scheme", "host", "port")]
         except KeyError:
+            scheme = host = port = None
+        if not all((scheme, host, port)):
             raise BadRequest(
                     "missing one of ['scheme', 'host', 'port'] arguments")
         namespace = kwargs.get('ns', getattr(self._local, 'namespace', None))
