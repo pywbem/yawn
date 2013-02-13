@@ -815,11 +815,12 @@ class Yawn(object):
         if assocCall in (AC_ASSOCIATORS, AC_REFERENCES):
             params['IncludeQualifiers'] = True
 
-        results = []
+        results = defaultdict(list)
         funcs = { AC_ASSOCIATORS      : 'Associators'
                 , AC_ASSOCIATOR_NAMES : 'AssociatorNames'
                 , AC_REFERENCES       : 'References'
                 , AC_REFERENCE_NAMES  : 'ReferenceNames' }
+        classes = {}
         with self.renderer('filtered_reference_names.mako',
                 className        = path.classname,
                 assoc_call       = ASSOC_CALLS[assocCall],
@@ -833,14 +834,17 @@ class Yawn(object):
 
             for i in objs:
                 path = i if isinstance(i, pywbem.CIMInstanceName) else i.path
-                klass = conn.GetClass(
-                        ClassName=path.classname,
-                        namespace=path.namespace,
-                        LocalOnly=False, IncludeQualifiers=True)
+                if not path.classname in classes:
+                    classes[path.classname] = conn.GetClass(
+                            ClassName=path.classname,
+                            namespace=path.namespace,
+                            LocalOnly=False, IncludeQualifiers=True)
+                klass = classes[path.classname]
                 keys_only = not assocCall in (AC_ASSOCIATORS, AC_REFERENCES)
-                results.append(cim_insight.get_inst_info(i, klass,
-                    include_all=True, keys_only=keys_only))
-            renderer['results'] = results
+                results[path.classname].append(
+                    cim_insight.get_inst_info(i, klass,
+                        include_all=True, keys_only=keys_only))
+            renderer['results'] = [(k, results[k]) for k in sorted(results)]
         return renderer.result
 
     @views.html_view()
@@ -1246,7 +1250,8 @@ class Yawn(object):
 
             # { association_class_name :
             #   { role_string : 
-            #     { role_class_name : [role_instance_name, ...]
+            #     { role_class_name :
+            #       [ ( assoc_instance_name, role_instance_name), ... ]
             #     , ... }
             #   , ... }
             # , ... }
@@ -1256,13 +1261,13 @@ class Yawn(object):
                 assoc_cname = ref_iname.classname
                 for role in ref_iname.keys():
                     role_iname = ref_iname[role]
-                    if role_iname == path:
+                    if util.inames_equal(role_iname, path):
                         continue
                     role_cname = role_iname.classname
                     if role_cname not in refdict[assoc_cname][role]:
                         refdict[assoc_cname][role][role_cname] = []
                     refdict[assoc_cname][role][role_cname].append(
-                            role_iname)
+                            (ref_iname, role_iname))
             renderer['associations'] = sorted(refdict.keys())
 
             # { accociation_class_name :
@@ -1278,9 +1283,12 @@ class Yawn(object):
                     ref_inames = []
                     for cls, ref_paths in sorted(
                             refs.items(), key=lambda i: i[0]):
-                        rfs = [   cim_insight.get_inst_info(p)
-                              for p in sorted(ref_paths) ]
-                        ref_inames.append((cls, ref_paths[0].namespace, rfs))
+                        rfs = []
+                        for ref_iname, role_iname in sorted(ref_paths):
+                            info = cim_insight.get_inst_info(role_iname)
+                            info["assoc"] = ref_iname
+                            rfs.append(info)
+                        ref_inames.append((cls, ref_paths[0][1].namespace, rfs))
                     refmap[assoc_cname].append((role, ref_inames))
             renderer['refmap'] = refmap
 

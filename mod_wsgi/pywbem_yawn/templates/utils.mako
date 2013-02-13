@@ -222,10 +222,13 @@
   </table>
 </%def>\
 
-<%def name="show_instance_names(inames, with_get_link=True, whole_path=True)">
+<%def name="show_instance_names(inames, with_get_link=True, with_assoc_link=False, whole_path=True)">
   % if len(inames) > 0:
     <table class="details">
       <tr class="headers">
+      % if with_assoc_link:
+        <th class="assoc" />
+      % endif
       % if with_get_link:
         <th class="get" />
       % endif
@@ -237,14 +240,20 @@
       <th class="namespace">Namespace</th>
       </tr>
       % for iname in inames:
-        ${show_instance_name(iname, with_get_link, whole_path)}
+        ${show_instance_name(iname, with_get_link, with_assoc_link, whole_path)}
       % endfor
     </table>
   % endif
 </%def>\
 
-<%def name="show_instance_name(iname, with_get_link=True, whole_path=True)">
+<%def name="show_instance_name(iname, with_get_link=True, with_assoc_link=False, whole_path=True)">
   <tr class="instance">
+    % if with_assoc_link:
+      <%
+        args = {'ns':iname['ns'], 'url':url, 'path':iname['assoc']}
+      %>
+      <td class="get">${make_href('GetInstance', args, 'assoc')}</td>
+    % endif
     % if with_get_link:
       <%
         args = {'ns':iname['ns'], 'url':url, 'path':iname['path']}

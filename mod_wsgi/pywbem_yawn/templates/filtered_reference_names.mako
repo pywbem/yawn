@@ -11,7 +11,7 @@
    * role
    * result_role
    * properties   - { key: value, ... }
-   * results
+   * results      - { class_name : [iname1, iname2, ...] }
 </%doc>
 <%def name="subtitle()">${assoc_call} ${assoc_class}</%def>
 <%def name="stylesheet()">
@@ -47,13 +47,15 @@
     <div id="stats">Showing ${len(results)} resulting
       object${'s' if len(results) != 1 else ''}.</div><br />
 
-    % for res in results:
+    % for class_name, res in results:
       <hr />
-      <% cargs = { 'ns':ns, 'url': url, 'className':className } %>
-      <h2>Objects of Class ${utils.make_href('GetClass', cargs, res['className'])}</h2>
-      ${utils.show_instance_names([res])}
+      <% cargs = { 'ns':ns, 'url': url, 'className':class_name } %>
+      <h2>Objects of Class ${utils.make_href('GetClass', cargs, class_name)}</h2>
+      ${utils.show_instance_names(res)}
       % if assoc_call in ('associators', 'references'):
-        ${utils.show_instance(res)}
+        % for inst in res:
+          ${utils.show_instance(inst)}
+        % endfor
       % endif
     % endfor
   % endif

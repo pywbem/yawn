@@ -1,4 +1,3 @@
-- show associators object paths on ReferenceNames results
 - on user input error, return to dialog page with errors highlighted
 - ensure, that classnames are rendered correctly (with exact case-sensitive)
   form: not from user input, but from broker

@@ -59,7 +59,7 @@
             </tr>
             <tr class="instance_names">
               <td colspan="2">
-                ${utils.show_instance_names(insts)}
+                ${utils.show_instance_names(insts, with_assoc_link=True)}
               </td>
             </tr>
           % endfor

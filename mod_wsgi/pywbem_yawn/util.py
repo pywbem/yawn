@@ -20,6 +20,7 @@ Various utilities.
 """
 from collections import defaultdict
 import inspect
+import pywbem
 import re
 
 _RE_URL_FUNC = re.compile(r'^[A-Z][a-z_A-Z0-9]+$')
@@ -67,6 +68,20 @@ def cmp_params(klass):
             return 1
         return _cmp_orig(aname['name'], bname['name'])
     return _cmp
+
+def inames_equal(op1, op2):
+    """
+    Compares 2 object paths for equality.
+    host attribute is ignored.
+    """
+    if (  not isinstance(op1, pywbem.CIMInstanceName)
+       or not isinstance(op2, pywbem.CIMInstanceName)
+       or op1.classname != op2.classname
+       or op1.namespace != op2.namespace
+       or (  pywbem.NocaseDict(op1.keybindings)
+          != pywbem.NocaseDict(op2.keybindings))):
+        return False
+    return True
 
 def base_script(request):
     """
