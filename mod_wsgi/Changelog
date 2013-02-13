@@ -1,8 +1,44 @@
-0.1.6
+0.1.7
+ * bumped version
+
+ * fixed rendering of html-tagged text
+ * due to default mako pre-filters, our hs filter did not work
+
+ * Fixed gathering of information for instance properties with qualifiers
+ * obtained from class.
+
+ * On ReferenceNames view no longer shall Associator table contain
+ * role of referred instance name.
+ *  - this was caused by object path comparison taking into account
+ *    "host" property - which is not much used
+
+ * Speeded up FilterReferenceNames view.
+ *  - GetClass is called only once for each class needed
+
+ * FilteredReferenceNames view now groups up object paths into one
+ * table.
+
+ * Associator table now contains additional link for each referent to
+ * corresponding instance of association class.
+
+ * fixed enumeration of instances
+ * when number of istances was 0, exception was raised
+
+ * fixed checking for scheme, host and port on Login view
+
+ * mentioned yawn.py script in README
+
+ * added changelog file
+
+ * upstream svn revision: 610
+
+0.1.6 upstream svn revision: 609
  * render whole path of reference values
 
  * all instance name references are now rendered with whole path instead
  * of just class name
+
+ * upstream svn revision: 609
 
  * fixed most of pylint errors and warnings
 
@@ -11,9 +47,13 @@
 
  * fixed rendering of filtered_reference_names
 
+ * upstream svn revision: 608
+
  * added a hint for user, when having connection problem
 
  * which is caused by selinux settings
+
+ * upstream svn revision: 607
 
  * bugfixes
 

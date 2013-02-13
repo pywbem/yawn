@@ -209,6 +209,14 @@ def get_class_item_details(class_name, item, inst=None):
             is_required   = item.qualifiers.has_key('required'),
             is_valuemap   = item.qualifiers.has_key('valuemap'))
 
+    if isinstance(item, (pywbem.CIMProperty, pywbem.CIMParameter)):
+        res.update(_get_property_details(item, inst))
+    elif isinstance(item, pywbem.CIMMethod): # CIMMethod
+        res['type'] = item.return_type
+        args = res['args']
+        for parameter in item.parameters.values():
+            args.append(get_class_item_details(class_name, parameter))
+
     if hasattr(item, 'class_origin'):
         res['is_local'] = item.class_origin == class_name
         res['class_origin'] = item.class_origin
@@ -222,14 +230,7 @@ def get_class_item_details(class_name, item, inst=None):
             continue
         res['qualifiers'].append(
                 (qualifier.name, render.val2str(qualifier.value)))
-    if isinstance(item, (pywbem.CIMProperty, pywbem.CIMParameter)):
-        res.update(_get_property_details(item, inst))
 
-    elif isinstance(item, pywbem.CIMMethod): # CIMMethod
-        res['type'] = item.return_type
-        args = res['args']
-        for parameter in item.parameters.values():
-            args.append(get_class_item_details(class_name, parameter))
     return res
 
 def get_class_props(klass=None, inst=None, include_all=False, keys_only=False):

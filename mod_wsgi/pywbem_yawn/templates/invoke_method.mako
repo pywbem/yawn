@@ -1,4 +1,3 @@
-<%! from pywbem_yawn.filters import hs %>\
 <%inherit file="base.mako" />
 <%namespace name="utils" file="utils.mako" />
 <%doc>

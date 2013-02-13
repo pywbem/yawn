@@ -6,7 +6,7 @@
   <h3>Python Provider for ${className}</h3>
   <div class="code">
     <pre>
-${code | trim,hs}
+${code | n,hs,trim}
     </pre>
   </div>
   <h3>Provider Registration MOF</h3>
@@ -15,7 +15,7 @@ ${code | trim,hs}
   % else:
     <div class="code">
       <pre>
-${mof | trim,hs}
+${mof | n,hs,trim}
       </pre>
     </div>
   % endif

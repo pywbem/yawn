@@ -82,7 +82,7 @@
       <th>Error Code</th><th>Error Description</th>
     </tr>
     <tr><td id="cim_error_type">${cim_error}</td>
-        <td id="cim_error_msg"><pre>${cim_error_msg | hs}</pre></td></tr>
+        <td id="cim_error_msg"><pre>${cim_error_msg | n,hs}</pre></td></tr>
   </table><br/>
   % if error_cause_description:
   <table id="cim_error_cause">
@@ -90,7 +90,7 @@
       <th colspan="2">Possible cause</th>
     </tr><tr>
       <th class="description">Problem</th>
-      <td class="cim_cause_description">${error_cause_description | hs}</td>
+      <td class="cim_cause_description">${error_cause_description | n,hs}</td>
     </tr><tr>
       <th class="solution">Possible fix</th>
       <td class="cim_cause_suggestion">${error_cause_suggestion}</td>

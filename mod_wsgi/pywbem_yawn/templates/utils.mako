@@ -181,7 +181,7 @@
       %>
       ${make_elem('tr', css)}<td class="type">
         ${print_data_type(p)}
-      </td><td class="title" title="${p['description'] | hs}">
+        </td><td class="title" title="${p['description'] | n,hs}">
         ${make_href('GetClass', cargs, p['name'], '#'+p['name'].lower())}
       </td><td class="value">
         ${print_data_value(p)}
@@ -207,7 +207,7 @@
             % for name, params in inst['methods']:
               <% methargs = objargs.copy(); methargs['method'] = name %>
               <tr><td>${make_href('PrepMethod', methargs, name)}
-                  (${', '.join(params) | hs})</td></tr>
+                  (${', '.join(params) | n,hs})</td></tr>
             % endfor
           </table>
         </td>
@@ -234,7 +234,7 @@
       % endif
       % for p in inames[0]['props']:
         % if p['is_key']:
-          <th>${p['name'] | hs}</th>
+          <th>${p['name'] | n,hs}</th>
         % endif
       % endfor
       <th class="namespace">Namespace</th>
@@ -265,7 +265,7 @@
         <td>${print_data_value(p, whole_path=whole_path)}</td>
       % endif
     % endfor
-    <td class="namespace">${iname['ns'] | hs}</td>
+    <td class="namespace">${iname['ns'] | n,hs}</td>
   </tr>
 </%def>\
 
@@ -341,7 +341,7 @@
                 if read_only else 'Enter Input Parameters')
   %>
   % if caption is not False and params:
-    <h3>${caption | hs}</h3>
+    <h3>${caption | n,hs}</h3>
   % endif
   % if not read_only:
     <form action="${action}" method="post">
@@ -430,7 +430,7 @@
       % for p in out_params:
         ${make_elem('tr', make_param_css(p), p['description'])}
           <td class="data_type">${print_data_type(p)}</td>
-          <td class="param_name">${p['name'] | hs}</td>
+          <td class="param_name">${p['name'] | n,hs}</td>
           % if with_values:
             <td class="value">${print_data_value(p)}</td>
           % endif
@@ -442,7 +442,7 @@
 
 <%def name="param_valmap_values(p, value)"><%
   if not p['values'][value]: return ""
-  %>${"(%s)"%', '.join(p['values'][value]) | hs}
+  %>${"(%s)"%', '.join(p['values'][value]) | n,hs}
 </%def>\
 
 <%def name="make_input_no_array(p, prefix='', suffix='', css=[])">
@@ -458,7 +458,7 @@
     % for v in p['valuemap']:
       <% selected = p['value_orig'] is not None and str(p['value_orig']) == v %>
       <option value="${v | h}"${' selected="selected"' if selected else ''}>
-        ${v | hs} ${param_valmap_values(p, v)}
+        ${v | n,hs} ${param_valmap_values(p, v)}
       </option>
     % endfor
     </select>
@@ -466,7 +466,7 @@
     <select ${css_str} id="${paramname | h}" name="${paramname | h}">
     % for v in ("", True, False):
       <% selected = p['value_orig'] is not None and bool(p['value_orig']) == v %>
-      <option value="${v | h}"${' selected="selected"' if selected else ''}>${v | hs}</option>
+      <option value="${v | h}"${' selected="selected"' if selected else ''}>${v | n,hs}</option>
     % endfor
     </select>
   % else:
@@ -508,7 +508,7 @@
             <input type="checkbox" name="${paramname | h}-${v | h}"
             ${' checked="checked"' if checked else ''} />
           </td>
-          <td class="value">${v | hs}</td>
+          <td class="value">${v | n,hs}</td>
           <td class="description">${param_valmap_values(p, v)}</td>
         </tr>
       % endfor

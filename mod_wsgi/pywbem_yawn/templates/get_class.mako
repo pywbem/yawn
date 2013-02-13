@@ -81,7 +81,7 @@
             </tr>
             % if description:
               <tr class="description">
-                <td colspan="2">${description | hs}</td>
+                <td colspan="2">${description | n,hs}</td>
               </tr>
             % endif
             <tr class="qualifiers"><td colspan="2">
@@ -89,7 +89,7 @@
               <% qfirst = True %>
               % for i, (qn, qv) in enumerate(qualifiers):
                 % if qn not in ('Composition', 'Association', 'Aggregation'):
-                  ${', ' if not qfirst else ''}${qn}(${'"%s"'%qv | hs})
+                  ${', ' if not qfirst else ''}${qn}(${'"%s"'%qv | n,hs})
                   <% qfirst = False %>
                 % endif
               % endfor
@@ -121,7 +121,7 @@
     ${utils.make_elem('tr', css)}
       <td><a id="${p['name'].lower()}"></a>
       % for qn, qv in p['qualifiers']:
-        ${qn | hs} ${qv | hs}<br />
+        ${qn | n,hs} ${qv | n,hs}<br />
       % endfor
       <span class="type">${utils.print_data_type(p)}</span>
       % if p['is_method']:
@@ -164,7 +164,7 @@
               <td>
                 % if a['description']:
                   <span class="description">
-                    ${a['description'] | hs}
+                    ${a['description'] | n,hs}
                   </span>
                 % endif
                 % if len(quals):
@@ -173,7 +173,7 @@
                     <% aqfirst = True %>
                     % for qn, qv in a['qualifiers']:
                       % if qn.lower() not in ('in', 'out'):
-                        ${'<tr><td></td>' if not aqfirst else ''}<td>${qn} ${qv | hs}</td></tr>
+                        ${'<tr><td></td>' if not aqfirst else ''}<td>${qn} ${qv | n,hs}</td></tr>
                         <% aqfirst = False %>
                       % endif
                     % endfor
@@ -205,7 +205,7 @@
       <br />
       % if p['description']:
         <span class="description">
-          ${p['description'] | hs}
+          ${p['description'] | n,hs}
         </span><br />
       % endif
       % if not p['is_local'] and p['class_origin']:
