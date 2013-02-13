@@ -13,3 +13,8 @@ Usage (for fedora/RHEL):
     $ service httpd restart
 
     and access the yawn service at: http://localhost/yawn
+
+For testing purposes you may use script scripts/yawn.py like this:
+    scripts/yawn.py -p $PORT
+  This runs a standalone daeamon hosting YAWN application on specified
+  PORT. Note, that pywbem_yawn package must be in your PYTHONPATH.
