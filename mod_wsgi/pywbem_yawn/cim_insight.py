@@ -141,6 +141,9 @@ def _get_property_details(prop, inst=None):
     value = _get_prop_value(prop, inst)
 
     res = _get_default_attributes_dict(prop.name,
+            is_deprecated = prop.qualifiers.has_key('deprecated'),
+            is_required   = prop.qualifiers.has_key('required'),
+            is_valuemap   = prop.qualifiers.has_key('valuemap'),
             is_key     = prop.qualifiers.has_key('key'),
             type       = _get_prop_type(prop, inst),
             value_orig = value)
@@ -226,7 +229,7 @@ def get_class_item_details(class_name, item, inst=None):
         res['description'] = None
     for qualifier in sorted(item.qualifiers.values(), key=lambda v: v.name):
         if qualifier.name.lower() in (
-                'description', 'deprecated', 'key', 'required'):
+                'description', 'key', 'required'):
             continue
         res['qualifiers'].append(
                 (qualifier.name, render.val2str(qualifier.value)))
