@@ -1025,6 +1025,8 @@ class Yawn(object):
                     **in_params)
             if out_params:
                 for param in tmpl_out_params:
+                    if not param['name'] in out_params:
+                        continue
                     value = out_params[param['name']]
                     if isinstance(param['type'], dict):
                         param['value'] = value

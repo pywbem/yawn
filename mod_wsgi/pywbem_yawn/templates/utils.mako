@@ -181,7 +181,11 @@
       %>
       ${make_elem('tr', css)}<td class="type">
         ${print_data_type(p)}
-        </td><td class="title" title="${p['description'] | n,hs}">
+        </td><td class="title"
+        % if 'description' in p:
+          title="${p['description'] | n,hs}"
+        % endif
+        >
         ${make_href('GetClass', cargs, p['name'], '#'+p['name'].lower())}
       </td><td class="value">
         ${print_data_value(p)}
@@ -369,7 +373,7 @@
               ## for Add button
               rowspan += 1
         %>
-        ${make_elem('tr', make_param_css(p), p['description'],
+        ${make_elem('tr', make_param_css(p), p['description'] if 'description' in p else '',
             id="param-"+prefix+prop_name+"-row-1")}
           <td id="${'param_type-'+prefix+prop_name}"
               rowspan="${rowspan}" class="data_type">${print_data_type(p)}</td>

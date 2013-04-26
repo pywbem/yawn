@@ -1,6 +1,11 @@
+- get rid of CIM abstraction dictionaries
 - on user input error, return to dialog page with errors highlighted
 - ensure, that classnames are rendered correctly (with exact case-sensitive)
   form: not from user input, but from broker
+- if host == localhost and uid == 0 --> access unix socket
+- handle disabled javascript
+- allow CIM:CQL and DMTF:CQL query languages
+
 
 examine possible sfcb bugs:
  - boolean key property does not get sent in reply from broker, when

@@ -55,8 +55,8 @@ def decode_reference(encoded_text):
     except Exception:
         raise ReferenceDecodeError(path=encoded_text)
 
-RE_INAME = re.compile(r"^((?P<namespace>.*):)?"
-        r"((?P<classname>[a-zA-Z_0-9]*)\.)?(?P<keys>.*)")
+RE_INAME = re.compile(r"^((?P<namespace>[^:.=]+):)?"
+        r"((?P<classname>[a-zA-Z_0-9]+)\.)?(?P<keys>.*)")
 
 # states of keybindings parser
 # 
@@ -85,14 +85,31 @@ def value_str2pywbem(prop, value):
     """
     Used by iname_str2pywbem function for transforming key value
     to a pywbem object.
+
+    @param prop may be None, in that case type will be guessed
     """
-    prop_type = prop['type']
-    if (_RE_INTEGER_TYPE.match(prop_type) or prop_type == "boolean"):
-        if value[0]  == '"':
-            value = value[1:]
-        if value[-1] == '"':
-            value = value[:-1]
-    return pywbem.tocimobj(prop['type'], value)
+    if prop is not None:
+        prop_type = prop['type']
+        if (_RE_INTEGER_TYPE.match(prop_type) or prop_type == "boolean"):
+            if value[0]  == '"':
+                value = value[1:]
+            if value[-1] == '"':
+                value = value[:-1]
+    else:
+        prop_type = 'string'
+        if value.lower() in {'true', 'false'}:
+            prop_type = 'boolean'
+        else:
+            try:
+                int(value)
+                prop_type = 'uint16'
+            except ValueError:
+                try:
+                    float(value)
+                    prop_type = 'float'
+                except ValueError:
+                    pass
+    return pywbem.tocimobj(prop_type, value)
 
 def iname_str2pywbem(props, iname, classname=None, namespace=None):
     """
@@ -134,7 +151,7 @@ def iname_str2pywbem(props, iname, classname=None, namespace=None):
                 if not match:
                     raise ValueError("Invalid path!")
                 key = match.group(1)
-                if not key in props:
+                if props and not key in props:
                     raise ValueError(
                         "Invalid path: unknown key \"%s\""
                         " for instance of class \"%s\"!"%(
@@ -151,12 +168,12 @@ def iname_str2pywbem(props, iname, classname=None, namespace=None):
             match = _RE_VALUE_SIMPLE.match(keybindings, pos)
             if not match:
                 raise ValueError("Invalid path!")
-            res[key] = value_str2pywbem(props[key], match.group(1))
+            res[key] = value_str2pywbem(props.get(key, None), match.group(1))
             pos = match.end()
             state = NEXT_KEY
         elif state == VALUE_STR:
             if letter == '"':
-                res[key] = value_str2pywbem(props[key], value)
+                res[key] = value_str2pywbem(props.get(key, None), value)
                 value = ''
                 state = VALUE_END
             elif letter == '\\':

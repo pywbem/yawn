@@ -181,12 +181,14 @@ def _get_property_details(prop, inst=None):
                 res['values'][val] = None
 
     if isinstance(prop, pywbem.CIMParameter):
-        # TODO is IN assumed to be true if the IN qualifier is missing?
-        res['in'] = (  not prop.qualifiers.has_key('in')
-                  or prop.qualifiers['in'].value)
-        res['out'] = (  prop.qualifiers.has_key('out')
-                   and prop.qualifiers['out'].value)
-
+        res['out'] = (   prop.qualifiers.has_key('out')
+                     and prop.qualifiers['out'].value)
+        # consider parameter as input if IN qualifier is missing and
+        # it is not an output parameter
+        res['in'] = (  (   prop.qualifiers.has_key('in')
+                       and prop.qualifiers['in'].value)
+                    or (   not prop.qualifiers.has_key
+                       and not res['out']))
     return res
 
 def get_class_item_details(class_name, item, inst=None):
