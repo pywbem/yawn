@@ -1,14 +1,19 @@
-* check for output parameters from InvokeMethod call
+upstream svn revistion: 620
+
+ * fixed enumeration of instrumented classes when root/PG_InterOp namespace
+   is renamed to root/interop
+
+ * check for output parameters from InvokeMethod call
   - not all parameters may be present according to mof declaration
 
-* consider parameter as input if IN qualifier is missing and
+ * consider parameter as input if IN qualifier is missing and
   it is not an output parameter
 
-* fixed parsing of objectpath from input fields, when values contain ':'
+ * fixed parsing of objectpath from input fields, when values contain ':'
 
-* try to guess the type of input property, when inspection fails
+ * try to guess the type of input property, when inspection fails
 
-* check for presence of "description" strings, which can be missing
+ * check for presence of "description" strings, which can be missing
   in template rendering
 
 0.1.7 upstream svn revistion: 617

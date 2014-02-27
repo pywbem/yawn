@@ -388,10 +388,21 @@ class Yawn(object):
         start_class = '.'
         with self.renderer('enum_instrumented_class_names.mako',
                 mode='deep', className=start_class) as renderer:
-            caps = conn.EnumerateInstances(
-                            ClassName='PG_ProviderCapabilities',
-                            namespace='root/PG_InterOp',
-                            PropertyList=['Namespaces', 'ClassName'])
+            caps = None
+            last_error = AssertionError("No interop namespace found")
+            for interopns in ('root/PG_InterOp', 'root/interop'):
+                try:
+                    caps = conn.EnumerateInstances(
+                                    ClassName='PG_ProviderCapabilities',
+                                    namespace=interopns,
+                                    PropertyList=['Namespaces', 'ClassName'])
+                    break
+                except pywbem.CIMError as err:
+                    if err.args[0] != pywbem.CIM_ERR_INVALID_NAMESPACE:
+                        raise
+                    last_error = err
+            else:
+                raise last_error
             deep_dict = {start_class:[]}
             for cap in caps:
                 if self._local.namespace not in cap['Namespaces']:
@@ -767,10 +778,11 @@ class Yawn(object):
                 nslist.append(interopns)
             nslist.sort()
             renderer['namespaces'] = nslist
-            if 'root/PG_InterOp' in nslist:
+            if 'root/PG_InterOp' in nslist or 'root/interop' in nslist:
                 renderer['nsd'] = dict([(x, 0) for x in nslist])
                 caps = conn.EnumerateInstances('PG_ProviderCapabilities',
-                        namespace='root/PG_InterOp',
+                        namespace='root/PG_InterOp'
+                            if 'root/PG_InterOp' in nslist else 'root/interop',
                         PropertyList=['Namespaces'])
                 for cap in caps:
                     for _ns in cap['Namespaces']:
