@@ -24,7 +24,7 @@
   ${parent.scripts()}
   % if not cim_error:
     <% params = items if new else instance['props'] %>
-    ${utils.js_input_params(params, prefix='methparam.')}
+    ${utils.js_input_params(params, prefix='propname.')}
     ${utils.res_js('jquery.min')}
     ${utils.res_js('jquery-ui.min')}
     ${utils.res_js('ref_input')}
