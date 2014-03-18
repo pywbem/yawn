@@ -43,7 +43,7 @@
   % endif
 </%def>
 <%def name="caption()">
-  <% args = {'ns':ns, 'url':url, 'className': className} %>
+  <% args = {'ns':ns, 'url':url, 'verify':verify, 'className': className} %>
   <h1>Invoke method ${utils.make_href('GetClass', args, className)}
     ::${utils.make_href('GetClass', args, method_name, '#'+method_name.lower())}()
     on ${'Instance' if iname is not None else 'Class'}</h1>

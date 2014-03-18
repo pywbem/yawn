@@ -11,7 +11,7 @@
 <%def name="subtitle()">Saving Instance Of ${className}</%def>
 <%def name="scripts()">
   % if not cim_error:
-    <% args = {'url':url, 'ns':ns, 'path':instance['path'] } %>
+    <% args = {'url':url, 'ns':ns, 'verify':verify, 'path':instance['path'] } %>
     <meta http-equiv="Refresh" content="1;url=${urls.build('GetInstance', args)}" />
   % endif
 </%def>
@@ -20,7 +20,7 @@
     ${self.print_cim_error("Failed to %s instance!" % (
         "create" if new else "modify"))}
   % else:
-    <% args = {'url':url, 'ns':ns, 'path':instance['path'] } %>
+    <% args = {'url':url, 'ns':ns, 'verify':verify, 'path':instance['path'] } %>
     The Instance has been saved. Refreshing...</br>
     If your browser doesn't refresh to the new instance,
     click ${utils.make_href_str('GetInstance', args, 'here')}.

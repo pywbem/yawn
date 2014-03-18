@@ -11,7 +11,7 @@
   % if len(namespaces):
     <table class="namespaces">
     % for namespace in namespaces:
-      <% args = {'ns':namespace, 'url':url, 'instOnly':False} %>
+      <% args = {'ns':namespace, 'url':url, 'verify':verify, 'instOnly':False} %>
       <tr><td>${utils.make_href('EnumClassNames', args, namespace)}</td>
       % if namespace in nsd and nsd[namespace]:
         <%

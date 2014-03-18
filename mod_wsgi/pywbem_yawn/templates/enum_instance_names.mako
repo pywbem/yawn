@@ -23,7 +23,7 @@
   % if cim_error:
     ${self.print_cim_error("Failed to enumerate instance names!")}
   % else:
-    <% args = {'ns':ns, 'url':url} %>
+    <% args = {'ns':ns, 'url':url, 'verify':verify} %>
     % for cname, namespace, inames in instances:
       % if len(instances) > 1:
         <h2>${self.iname_caption(cname, inames)}</h2>
@@ -37,7 +37,7 @@
 
 <%def name="iname_caption(cname, inames)">
   <%
-    args = {'ns':ns, 'url':url, 'className':cname}
+    args = {'ns':ns, 'url':url, 'verify':verify, 'className':cname}
     if isinstance(inames, int):
       cnt = inames
     else:

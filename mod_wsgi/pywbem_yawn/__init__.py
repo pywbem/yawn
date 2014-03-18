@@ -34,6 +34,7 @@ CIM brokers with pywbem --- using WBEM CIM-XML protocol.
 """
 
 import bisect
+import inspect
 import logging
 import pywbem
 import pywbem.cim_http
@@ -234,9 +235,11 @@ class Yawn(object):
         """
         url = self._local.url
         namespace  = self._local.namespace
+        verify = getattr(self._local, 'verify', True)
         if (   hasattr(self._local, 'connection')
            and self._local.connection.url == url
-           and self._local.connection.default_namespace == namespace):
+           and self._local.connection.default_namespace == namespace
+           and self._local.connection.no_verification == (not verify)):
             return self._local.connection
 
         req = self._local.request
@@ -251,7 +254,13 @@ class Yawn(object):
                 self.response.set_cookie('yawn_logout', 'false',
                         path=util.base_script(req))
                 user, password = '', ''
-        self._local.connection = pywbem.WBEMConnection(url, (user, password))
+        kwargs = {}
+        argspec = inspect.getargspec(pywbem.WBEMConnection.__init__)
+        if 'no_verification' in argspec.args:
+            # check first, whether pywbem is new enough
+            kwargs['no_verification'] = not verify
+        self._local.connection = pywbem.WBEMConnection(
+                url, (user, password), **kwargs)
         self._local.connection.default_namespace = namespace
         self._local.connection.debug = True
         return self._local.connection
@@ -269,8 +278,14 @@ class Yawn(object):
                 'static' : self.static_prefix,
                 'conn'   : getattr(self._local, 'connection', None),
                 'url'    : getattr(self._local, 'url', None),
-                'ns'     : getattr(self._local, 'namespace', None)
+                'ns'     : getattr(self._local, 'namespace', None),
               }
+        if      (   render_kwargs['url']
+                and render_kwargs['url'].startswith('https://')
+                and getattr(self._local, 'verify', True)):
+            render_kwargs['verify'] = '1'
+        else:
+            render_kwargs['verify'] = '0'
         render_kwargs.update(kwargs)
         return render.Renderer(self._lookup, template,
                 debug=self._debug, **render_kwargs)
@@ -1081,6 +1096,7 @@ class Yawn(object):
                 "scheme", "host", "port")]
         except KeyError:
             scheme = host = port = None
+        ssl_verify = kwargs.get("ssl_verify", False)
         if not all((scheme, host, port)):
             raise BadRequest(
                     "missing one of ['scheme', 'host', 'port'] arguments")
@@ -1093,6 +1109,7 @@ class Yawn(object):
             url = host
         self._local.url = url
         self._local.namespace = namespace
+        self._local.verify = ssl_verify
         if namespace:
             return self.on_EnumClassNames()
         return self.on_EnumNamespaces()

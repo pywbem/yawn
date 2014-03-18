@@ -16,7 +16,7 @@
   ${utils.res_css('instance')}
 </%def>
 <%def name="caption()">
-  <% args = {'ns':ns, 'url':url, 'className':className} %>
+  <% args = {'ns':ns, 'url':url, 'verify':verify, 'className':className} %>
   <h1>
     Invoked method ${utils.make_href('GetClass', args, className)}
     ::${utils.make_href('GetClass', args, method_name, '#'+method_name.lower())}()
@@ -38,7 +38,7 @@
     </div>
   % endif
   <div class="nav">
-    <% args = {'ns':ns, 'url':url, 'className':className} %>
+    <% args = {'ns':ns, 'url':url, 'verify':verify, 'className':className} %>
     Return to class ${utils.make_href('GetClass', args, className)}
   </div>
   % if iname:

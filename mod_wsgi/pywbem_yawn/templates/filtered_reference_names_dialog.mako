@@ -12,15 +12,17 @@
   <script type="application/x-javascript">
     (function($) {
       $(document).ready(function($) {
-        $("#call_type select").change(function() {
-          var $this = $(this),
-              objs  = $("#assoc_class, #result_role");
-          if ($this.val().match(/^assoc/i) != null) {
+        var toggle_inputs_visibility = function() {
+          var objs = $("#assoc_class, #result_role");
+          if ($("#call_type select").val().match(/^assoc/i) != null) {
             objs.show();
           }else {
             objs.hide();
           }
-        });
+        };
+
+        $("#call_type select").change(toggle_inputs_visibility);
+        toggle_inputs_visibility();
       });
     })(jQuery);
   </script>
@@ -31,7 +33,7 @@
   ${utils.res_css('filtered_reference_names_dialog')}
 </%def>
 <%def name="caption()">
-  <% args = {'ns':ns, 'url':url, 'className':className} %>
+  <% args = {'ns':ns, 'url':url, 'verify':verify, 'className':className} %>
   <h1>Filtered References on Class ${utils.make_href('GetClass', args, className)}</h1>
 </%def>
 <%def name="content()">
@@ -65,7 +67,7 @@
         <th>Call type</th>
         <td>
           <select name="assocCall">
-            <option selected="selected" value="Associators">Associator</option>
+            <option selected="selected" value="Associators">Associators</option>
             <option value="AssociatorNames">Associator Names</option>
             <option value="References">References</option>
             <option value="ReferenceNames">Reference Names</option>
@@ -74,7 +76,7 @@
       </tr>
       <tr id="submit">
         <td colspan="2">
-          % for n, v in (('ns', ns), ('url', url)):
+          % for n, v in (('ns', ns), ('url', url), ('verify', verify)):
             <input type="hidden" name="${n}" value="${v | h}" />
           % endfor
           <input type="submit" value="Submit" />

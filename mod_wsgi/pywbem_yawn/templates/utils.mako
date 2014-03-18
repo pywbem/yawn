@@ -58,6 +58,8 @@
       args['ns'] = ns
     if 'url' not in args:
       args['url'] = url
+    if 'verify' not in args:
+      args['verify'] = verify
     res = "%s REF" % make_href_str('GetClass', args, p['type']['className'])
   else:
     res = markupsafe.escape(p['type'])
@@ -85,9 +87,10 @@
         results.append(print_data_value(pn, whole_path))
       return "{ " + ", ".join(results) + " }"
     if isinstance(p['type'], dict):
-      args = { 'url' : p['type'].get('url', url)
-             , 'ns'  : p['type'].get('ns', ns)
-             , 'path': p['value'] }
+      args = { 'url'    : p['type'].get('url', url)
+             , 'ns'     : p['type'].get('ns', ns)
+             , 'verify' : p['type'].get('verify', verify)
+             , 'path'   : p['value'] }
       if not args['ns'] and ns:
         args['ns'] = ns
       if not whole_path and p['type'].get('className', None):
@@ -98,7 +101,7 @@
         target = p['value']
       return make_href_str('GetInstance', args, target, classes=["path-reference"])
     elif p['name'].lower().endswith('classname'):
-      args = {'url':url, 'ns':ns, 'className':p['value']}
+      args = {'url':url, 'ns':ns, 'verify':verify, 'className':p['value']}
       return make_href_str('GetClass', args, p['value'])
     val = p['value']
     if not getattr(val, 'safe', False):
@@ -146,7 +149,7 @@
 <%def name="show_instance(inst)">
   <%
     cname = inst['className'] if 'className' in inst else className
-    args    = {'ns':ns, 'url':url}
+    args    = {'ns':ns, 'url':url, 'verify':verify}
     cargs   = args.copy(); cargs['className'] = cname
     objargs = args.copy(); objargs['path'] = inst['path']
     have_required_props = False
@@ -254,13 +257,13 @@
   <tr class="instance">
     % if with_assoc_link:
       <%
-        args = {'ns':iname['ns'], 'url':url, 'path':iname['assoc']}
+        args = {'ns':iname['ns'], 'url':url, 'verify':verify, 'path':iname['assoc']}
       %>
       <td class="get">${make_href('GetInstance', args, 'assoc')}</td>
     % endif
     % if with_get_link:
       <%
-        args = {'ns':iname['ns'], 'url':url, 'path':iname['path']}
+        args = {'ns':iname['ns'], 'url':url, 'verify':verify, 'path':iname['path']}
       %>
       <td class="get">${make_href('GetInstance', args, 'get')}</td>
     % endif
@@ -281,7 +284,7 @@
   % for cname in classes[curclass]:
     <tr class="level${level} ${('even', 'odd')[ctx['counter']%2]}">
       <%
-        args = {'url':url, 'ns':ns, 'className':cname}
+        args = {'url':url, 'ns':ns, 'verify':verify, 'className':cname}
         css = set()
         if cname.startswith('CIM_'):
           css.add('cim_schema')
@@ -306,7 +309,7 @@
   % if mode == 'deep':
     ${'|&nbsp;&nbsp;&nbsp;&nbsp;'*(level-1)}${'|---' if level > 0 else ''}
   % elif mode != 'flat' and cname in classes and len(classes[cname]):
-    <% args = {'url':url, 'ns':ns, 'className': cname, 'mode':mode} %>
+    <% args = {'url':url, 'ns':ns, 'verify':verify, 'className': cname, 'mode':mode} %>
     ${make_href('EnumClassNames', args, '+')}
   % endif
 </%def>\
@@ -379,7 +382,7 @@
               rowspan="${rowspan}" class="data_type">${print_data_type(p)}</td>
           <td id="${'param_name-'+prefix+prop_name}"
               rowspan="${rowspan}" class="param_name">
-            <% cargs = {'url':url, 'ns':ns, 'className':className } %>
+            <% cargs = {'url':url, 'ns':ns, 'verify':verify, 'className':className } %>
             ${make_href('GetClass', cargs, p['name'], '#'+prop_name)}
           </td>
           <%
@@ -412,6 +415,7 @@
       <div class="submit">
         <input type="hidden" name="url" value="${url | h}" />
         <input type="hidden" name="ns" value="${ns}" />
+        <input type="hidden" name="verify" value="${verify}" />
         <input type="submit" value="${submit | h}" />
       </div>
     % endif

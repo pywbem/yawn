@@ -22,7 +22,7 @@
 ##  ${utils.res_css('instance_names')}
 ##</%def>
 <%def name="caption()">
-  <% args = {'url':url, 'ns':ns, 'className':className} %>
+  <% args = {'url':url, 'ns':ns, 'verify':verify, 'className':className} %>
     <h1>Classes Associated To ${utils.make_href('GetClass', args, className)}
       in Namespace: ${ns}</h1>
 </%def>
@@ -37,7 +37,7 @@
         <th class="role">Role</th>
         <th class="associated_role">Associated Role</th>
       </tr>
-      <% args = {'url':url, 'ns':ns} %>
+      <% args = {'url':url, 'ns':ns, 'verify':verify} %>
       % for i, (acn, vcn, role, roled, arole, aroled) in enumerate(associations):
         ${utils.make_elem('tr', utils.make_count_tags(i, len(associations)))}
           <% args['className'] = acn %>

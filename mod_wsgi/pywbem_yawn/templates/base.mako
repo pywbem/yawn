@@ -8,6 +8,7 @@
     * conn    - pywbem connection object
     * url     - (optional) CIMOM url
     * ns      - (optional) namespace
+    * verify  - (optional) whether to verify certificates
     * heading - (optional) text situated in page's caption
 </%doc>\
 <?xml version="1.0" encoding="UTF-8"?>
@@ -37,6 +38,7 @@
   % if ns:
     var ns="${ns}";
   % endif
+    var verify="${verify}";
   % if className:
     var className="${className}";
   % endif
@@ -53,15 +55,15 @@
         ${self.caption()}
       </td>
     % if ns and url:
-      <% args = {'ns':ns, 'url':url} %>
+      <% args = {'ns':ns, 'url':url, 'verify':verify} %>
       <td class="enum_class_names nav">${utils.make_href('EnumClassNames', args, ns)}</td>
     % endif
     % if url:
-      <% args = {'url':url} %>
+      <% args = {'url':url, 'verify':verify} %>
       <td class="enum_namespaces nav">${utils.make_href('EnumNamespaces', args, 'Namespaces')}</td>
     % endif
     % if ns and url:
-      <% args = {'ns':ns, 'url':url} %>
+      <% args = {'ns':ns, 'url':url, 'verify':verify} %>
       <td class="query_d nav">${utils.make_href('QueryD', args, 'Query')}</td>
     % endif
       <td class="logout nav">${utils.make_href('Logout', target='Logout >>')}</td>

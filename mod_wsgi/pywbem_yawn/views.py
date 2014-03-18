@@ -29,6 +29,31 @@ from pywbem_yawn import render
 _LOG = logging.getLogger(__name__)
 
 GET, POST, GET_AND_POST = 1, 2, 3
+
+def _convert(val, to=str):
+    """
+    Convert value given as string to particular python data type.
+
+    @param val: Value to convert.
+    @param to: Type factory.
+    """
+    if to is bool:
+        return (   isinstance(val, basestring)
+               and val.lower() in ('1', 'true', 'y', 'yes', 'on'))
+    if to is str:
+        return (    val.encode('utf-8') if isinstance(val, unicode)
+               else str(val))
+    if to is unicode:
+        return (    val.decode('utf-8') if isinstance(val, str)
+               else unicode(val))
+    return to(val)
+
+COMMON_ARGUMENTS = (
+            ('url', 'url', True, str, None),
+            ('ns', 'namespace', True, str, None),
+            ('verify', 'verify', False, bool, False)
+)
+
 def html_view(
         http_method      = GET,
         require_url      = True,
@@ -62,25 +87,26 @@ def html_view(
         return value
 
     def _store_var(storage, req, var_name, store_as,
-            required, form, kwargs):
+            required, as_type, default, form, kwargs):
         """
         Params form and kwargs may get modified by this function.
         """
         if getattr(storage, store_as, None) is not None:
             return
-        setattr(storage, store_as, kwargs.pop(var_name, None))
-        if http_method & GET:
-            try:
-                setattr(storage, store_as, req.args[var_name])
-            except KeyError:
-                pass
-        if getattr(storage, store_as) is None and http_method & POST:
-            try:
-                setattr(storage, store_as, _form_val(form, var_name))
-            except KeyError:
-                pass
-        if required and getattr(storage, store_as) is None:
-            raise BadRequest("missing '%s' argument"%var_name)
+        val = kwargs.pop(var_name, None)
+        setattr(storage, store_as,
+                _convert(val, as_type) if val is not None else val)
+        if http_method & GET and var_name in req.args:
+            setattr(storage, store_as, _convert(req.args[var_name], as_type))
+        if      (   getattr(storage, store_as) is None
+                and http_method & POST
+                and var_name in form):
+            setattr(storage, store_as,
+                    _convert(_form_val(form, var_name), as_type))
+        if getattr(storage, store_as) is None:
+            if required:
+                raise BadRequest("missing '%s' argument" % var_name)
+            setattr(storage, store_as, default)
         return getattr(storage, store_as)
 
     def _deco(func):
@@ -97,11 +123,14 @@ def html_view(
             for k in kwargs:
                 if k in form:
                     del form[k]
-            for var_name, store_as, required in (
-                    ('url', 'url'      , require_url)
-                  , ('ns' , 'namespace', require_namespace)):
+            for var_name, store_as, required, as_type, default in \
+                    COMMON_ARGUMENTS:
+                if var_name == 'url':
+                    required = require_url
+                elif var_name == 'ns':
+                    required = require_namespace
                 _store_var(self._local, req, var_name, store_as,
-                        required, form, kwargs)
+                        required, as_type, default, form, kwargs)
             if http_method & POST:
                 for k, value in form.items():
                     if isinstance(value, list):
@@ -140,11 +169,11 @@ def json_view(func):
         """
         req = self._local.request
         try:
-            for var_name, store_as in (
-                    ('url', 'url'), ('ns', 'namespace')):
-                if not var_name in req.args:
-                    raise BadRequest("missing %s argument"%var_name)
-                setattr(self._local, store_as, req.args[var_name])
+            for var_name, store_as, required, as_type, default in \
+                    COMMON_ARGUMENTS:
+                if required and var_name not in req.args:
+                    raise BadRequest("missing '%s' argument" % var_name)
+                setattr(self._local, store_as, req.args.get(var_name, default))
             res = func(self, *args, **kwargs)
         except Exception as exc:  #pyling: disable=W0703
             if isinstance(exc, pywbem.CIMError):

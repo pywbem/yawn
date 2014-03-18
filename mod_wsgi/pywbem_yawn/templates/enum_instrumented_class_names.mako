@@ -21,7 +21,7 @@
   % if cim_error:
     ${self.print_cim_error("Failed to enumerate instrumented class names!")}
   % else:
-    <% urlargs = {'ns':ns, 'url':url} %>
+    <% urlargs = {'ns':ns, 'url':url, 'verify':verify} %>
     <table class="listing">
       <% start_class = 'None' if className is None else className %>
       ${utils.enum_classes(start_class)}

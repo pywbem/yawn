@@ -29,6 +29,7 @@
     <div class="submit">
       <input type="hidden" name="url" value="${url | h}" />
       <input type="hidden" name="ns" value="${ns | h}" />
+      <input type="hidden" name="verify" value="${verify}" />
       <input type="submit" value="Execute Query" />
     </div>
   </form>

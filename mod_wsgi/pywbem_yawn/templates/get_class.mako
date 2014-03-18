@@ -44,7 +44,7 @@
     ${self.print_cim_error("Failed to get class!")}
   % else:
     <%
-      args  = {'url':url, 'ns':ns}
+      args  = {'url':url, 'ns':ns, 'verify':verify}
       cargs = args.copy();
       cargs['className'] = className
     %>
@@ -126,7 +126,7 @@
       <span class="type">${utils.print_data_type(p)}</span>
       % if p['is_method']:
         <%
-          args = { 'ns':ns, 'url':url, 'method':p['name']
+          args = { 'ns':ns, 'url':url, 'verify':verify, 'method':p['name']
                  , 'className':className }
         %>
         <span class="name">${utils.make_href('PrepMethod', args, p['name'])}</span>(
@@ -209,7 +209,7 @@
         </span><br />
       % endif
       % if not p['is_local'] and p['class_origin']:
-        <% args = {'ns':ns, 'url':url, 'className': p['class_origin'] } %>
+        <% args = {'ns':ns, 'url':url, 'verify':verify, 'className': p['class_origin'] } %>
         <div class="class_origin">
           <span class="caption">Class Origin:</span>
           ${utils.make_href('GetClass', args, p['class_origin'])}

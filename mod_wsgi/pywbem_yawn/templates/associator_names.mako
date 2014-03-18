@@ -15,7 +15,7 @@
   % if cim_error:
     ${self.print_cim_error("Failed to get associator names!")}
   % else:
-    <% args = {'ns':ns, 'url':url } %>
+    <% args = {'ns':ns, 'url':url, 'verify':verify} %>
     % for cname, namespace, inames in instances:
       <h2 class="className">${cname}</h2>
       ${utils.show_instance_names(inames, True)}

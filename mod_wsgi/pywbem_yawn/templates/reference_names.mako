@@ -18,7 +18,7 @@
   ${utils.res_css('reference_names')}
 </%def>
 <%def name="caption()">
-  <% args = {'ns':ns, 'url':url, 'className':iname['className']} %>
+  <% args = {'ns':ns, 'url':url, 'verify':verify, 'className':iname['className']} %>
   <h1>Objects associated with instance of
     ${utils.make_href('GetClass', args, iname['className'])}</h1>
 </%def>
@@ -38,7 +38,7 @@
     % endif
     <hr />
     % for assoc in associations:
-      <% args = {'ns': ns, 'url':url, 'className':assoc} %>
+      <% args = {'ns': ns, 'url':url, 'verify':verify, 'className':assoc} %>
       <table class="assoc details">
         <tr class="assoc_header">
           <th colspan="2">
@@ -52,7 +52,7 @@
             <td class="value">${role}</td>
           </tr>
           % for rfi, (cls, namespace, insts) in enumerate(refs):
-            <% cargs = {'ns':ns, 'url':url, 'className':cls} %>
+            <% cargs = {'ns':ns, 'url':url, 'verify':verify, 'className':cls} %>
             ${utils.make_elem('tr', utils.make_count_tags(rfi, len(refs), set(('type',))))}
               <td class="key">Type</td>
               <td class="value">${utils.make_href('GetClass', cargs, cls)}</td>

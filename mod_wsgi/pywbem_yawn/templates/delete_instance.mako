@@ -11,7 +11,7 @@
   ${utils.res_css('instance_names')}
 </%def>
 <%def name="caption()">
-  <% args = { 'ns':ns, 'url':url, 'className':className } %>
+  <% args = { 'ns':ns, 'url':url, 'verify':verify, 'className':className } %>
     <h1>
       Deleted Instance of
       ${utils.make_href('GetClass', args, className)}

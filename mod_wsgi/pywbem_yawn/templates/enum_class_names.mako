@@ -23,7 +23,7 @@
 <%def name="caption()"><h1>${"Classes in '%s/%s'" % (url, ns) | h}</h1></%def>\
 
 <%def name="content()">
-<% urlargs = {'ns':ns, 'url':url} %>
+  <% urlargs = {'ns':ns, 'url':url, 'verify':verify} %>
   <table class="nav">
     <tr>
       <td class="lineage">

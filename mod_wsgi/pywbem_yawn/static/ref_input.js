@@ -183,7 +183,7 @@
             }
             $.ajax({
                 url      : base_url+'/json_query_instances',
-                data     : {"url":url, "ns":ns, "query":query},
+                data     : {"url":url, "ns":ns, "verify":verify, "query":query},
                 dataType : 'json',
                 beforeSend : function(req) {
                     if (typeof auth == "string")
@@ -289,7 +289,7 @@
                 }else {
                     $.ajax({
                         url      : base_url+'/json_get_class_keys/'+ref_class_name,
-                        data     : {"url":url, "ns":ns},
+                        data     : {"url":url, "ns":ns, "verify":verify},
                         dataType : 'json',
                         success  : function(data, textStatus) {
                             load_ref_keys(prop, ireftype, data, textStatus);

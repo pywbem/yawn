@@ -21,7 +21,7 @@
   % endfor
 </%def>
 <%def name="caption()">
-  <% args = { 'ns':ns, 'url': url, 'className':className } %>
+  <% args = { 'ns':ns, 'url': url, 'verify':verify, 'className':className } %>
   <h1>
     Filtered Objects associated with instance of
     ${utils.make_href('GetClass', args, className)}
@@ -49,7 +49,7 @@
 
     % for class_name, res in results:
       <hr />
-      <% cargs = { 'ns':ns, 'url': url, 'className':class_name } %>
+      <% cargs = { 'ns':ns, 'url': url, 'verify':verify, 'className':class_name } %>
       <h2>Objects of Class ${utils.make_href('GetClass', cargs, class_name)}</h2>
       ${utils.show_instance_names(res)}
       % if assoc_call in ('associators', 'references'):

@@ -32,7 +32,7 @@
   % endif
 </%def>
 <%def name="caption()">
-  <% args = {'url':url, 'ns':ns, 'className':className} %>
+  <% args = {'url':url, 'ns':ns, 'verify':verify, 'className':className} %>
   <h1>
     ${'Create' if new else 'Modify'} Instance of
     ${utils.make_href('GetClass', args, className)}
