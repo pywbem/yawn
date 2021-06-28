@@ -37,7 +37,7 @@ import bisect
 import inspect
 import logging
 import pywbem
-import pywbem.cim_http
+import pywbem._cim_http
 import mako
 import mako.lookup
 import pkg_resources
@@ -324,7 +324,7 @@ class Yawn(object):
         """
         try:
             return self.wsgi_app(environ, start_response)
-        except pywbem.cim_http.AuthError:
+        except pywbem._cim_http.AuthError:
             response = self.response
             unresp = Unauthorized().get_response(environ)
             response.status_code = unresp.status_code
@@ -478,7 +478,7 @@ class Yawn(object):
                             namespace=namespaces[ins])
                     interopns = namespaces[ins]
                     nsclass = nsclasses[icls]
-                except pywbem.CIMError, arg:
+                except pywbem.CIMError as arg:
                     if arg[0] in [pywbem.CIM_ERR_INVALID_NAMESPACE,
                                   pywbem.CIM_ERR_NOT_SUPPORTED,
                                   pywbem.CIM_ERR_INVALID_CLASS]:

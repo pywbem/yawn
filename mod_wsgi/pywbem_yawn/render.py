@@ -19,7 +19,7 @@
 Utilities and functions for template rendering.
 """
 import base64
-import cPickle
+import pickle
 import datetime
 from collections import defaultdict
 import mako.lookup
@@ -28,6 +28,7 @@ import pywbem
 import re
 import types
 import zlib
+import six
 from pywbem_yawn import util
 
 _RE_ERRNO_13 = re.compile(r'^socket\s+error\s*:.*errno\s*13', re.I)
@@ -52,13 +53,13 @@ CIM_ERROR2TEXT = defaultdict(lambda: "OTHER_ERROR", {
     17 : "METHOD_NOT_FOUND"
 })
 
-class SafeString(unicode): #pylint: disable=R0924,R0904,C0111
+class SafeString(six.text_type): #pylint: disable=R0924,R0904,C0111
     """
     when this type of string is passed to template, it will be not escaped
     upon rendering if safe param is True
     """
     def __init__(self, text):
-        unicode.__init__(self, text)
+        six.text_type.__init__(self, text)
         self.safe = True
 
 def render_cim_error_msg(err):
@@ -118,7 +119,7 @@ class Renderer(object):
         if not isinstance(lookup, mako.lookup.TemplateLookup):
             raise TypeError("lookup must be an instance of"
                     " mako.lookup.TemplateLookup")
-        if not isinstance(template, basestring):
+        if not isinstance(template, (six.binary_type, six.text_type)):
             raise TypeError("template must be a string with the"
                     " name of template to render")
         self._debug = debug
@@ -227,7 +228,7 @@ def encode_reference(obj):
     @return compressed and encoded object.
     """
     return base64.urlsafe_b64encode(
-            zlib.compress(cPickle.dumps(obj, cPickle.HIGHEST_PROTOCOL)))
+            zlib.compress(pickle.dumps(obj, pickle.HIGHEST_PROTOCOL)))
 
 def val2str(value):
     """

@@ -20,10 +20,11 @@ Utilities and functions for parsing user input obtained from html forms.
 """
 
 import base64
-import cPickle
+import pickle
 import pywbem
 import re
 import zlib
+import six
 
 class ReferenceDecodeError(ValueError):
     """
@@ -37,7 +38,7 @@ class ReferenceDecodeError(ValueError):
         else:
             key = ''
         if path is not None:
-            if isinstance(path, unicode):
+            if isinstance(path, six.text_type):
                 path = path.encode('utf-8')
             path = ' "%s"' % str(path)
         else:
@@ -50,7 +51,7 @@ def decode_reference(encoded_text):
     Decompress object path to python object.
     """
     try:
-        return cPickle.loads(zlib.decompress(base64.urlsafe_b64decode(
+        return pickle.loads(zlib.decompress(base64.urlsafe_b64decode(
             encoded_text)))
     except Exception:
         raise ReferenceDecodeError(path=encoded_text)
