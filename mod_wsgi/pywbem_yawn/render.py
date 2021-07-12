@@ -69,7 +69,7 @@ def render_cim_error_msg(err):
     """
     if not isinstance(err, pywbem.CIMError):
         raise TypeError("err must be a CIMError")
-    errstr = err[1]
+    errstr = err.args[1]
     if errstr.startswith('cmpi:'):
         errstr = errstr[5:]
     elif 'cmpi:Traceback' in errstr:
@@ -204,7 +204,7 @@ class Renderer(object):
             if self._debug and exc_type is not pywbem.CIMError:
                 # if debugger is turned on, let it do the job
                 return False
-            if exc_type == pywbem.cim_http.AuthError:
+            if exc_type == pywbem._cim_http.AuthError:
                 # do not handle Authentication
                 return False
         return True
