@@ -1107,6 +1107,7 @@ class Yawn(object):
             url += ':'+port
         if host[0] == '/':
             url = host
+        namespace = namespace.decode()
         self._local.url = url
         self._local.namespace = namespace
         self._local.verify = ssl_verify
