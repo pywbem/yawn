@@ -96,10 +96,14 @@ def value_str2pywbem(prop, value):
                 value = value[1:]
             if value[-1] == '"':
                 value = value[:-1]
+        if prop_type == "boolean":
+            value = True if value.lower() == "true" else False
     else:
         prop_type = 'string'
+        print("LOWERb=", value.lower())
         if value.lower() in {'true', 'false'}:
             prop_type = 'boolean'
+            value = True if value.lower() == "true" else False
         else:
             try:
                 int(value)
@@ -110,7 +114,7 @@ def value_str2pywbem(prop, value):
                     prop_type = 'float'
                 except ValueError:
                     pass
-    return pywbem.tocimobj(prop_type, value)
+    return pywbem.cimvalue(value, prop_type)
 
 def iname_str2pywbem(props, iname, classname=None, namespace=None):
     """
@@ -286,7 +290,7 @@ def formvalue2cimobject(param, prefix, formdata, pop_used=False,
         return res
     def process_simple_value(val):
         """@return value as a cim object"""
-        return pywbem.tocimobj(param['type'], val)
+        return pywbem.cimvalue(val, param['type'])
 
     if param['is_array']:
         result = []

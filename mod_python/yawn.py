@@ -765,10 +765,10 @@ def _createOrModifyInstance(req, conn, url, ns, className, instName, **params):
                         else:
                             propVal = propVal.split(",")
                             propVal = [x.strip() for x in propVal]
-                    propVal = [pywbem.tocimobj(dt, x) for x in propVal]
+                    propVal = [pywbem.cimvalue(x, dt) for x in propVal]
                     inst.properties[propName] = propVal
                 else:
-                    inst.properties[propName] = pywbem.tocimobj(dt, propVal)
+                    inst.properties[propName] = pywbem.cimvalue(propVal, dt)
     if instName:
         if instName.namespace is None: 
             instName.namespace = ns
@@ -928,7 +928,7 @@ def _displayInstanceMod(req, conn, url, ns, klass, oldInstPathPair = None, getIn
                 # skip valuemap items that aren't valid values
                 # such as the numeric ranges for DMTF Reserved and whatnot
                 try:
-                    pywbem.tocimobj(prop.type, curVal)
+                    pywbem.cimvalue(curVal, prop.type)
                 except:
                     continue
                 ht+= '<option value="'+curVal+'"'
@@ -1099,13 +1099,13 @@ def InvokeMethod(req, url, ns, objPath, method, **params):
                     if metaParm.reference_class is not None:
                         paramVal = [_decodeObject(x) for x in paramVal]
                     else:
-                        paramVal = [pywbem.tocimobj(dt[:-2], x) for x in paramVal]
+                        paramVal = [pywbem.cimvalue(x, dt[:-2]) for x in paramVal]
                     inParms[paramName] = paramVal
                 else:
                     if metaParm.reference_class is not None:
                         inParms[paramName] = _decodeObject(paramVal)
                     else:
-                        inParms[paramName] = pywbem.tocimobj(dt, paramVal)
+                        inParms[paramName] = pywbem.cimvalue(paramVal, dt)
         ht+= '</table>'
 
     (rval, outParms) = _ex(req,conn.InvokeMethod,MethodName=method, ObjectName=lobjPath, **inParms)
@@ -1318,7 +1318,7 @@ def PrepMethod(req, url, ns, objPath, method):
                     # skip valuemap items that aren't valid values
                     # such as the numeric ranges for DMTF Reserved and whatnot
                     try:
-                        pywbem.tocimobj(param.type, curVal)
+                        pywbem.cimvalue(curVal, param.type)
                     except:
                         continue
                     ht+= '<option value="'+curVal+'">'+curVal
