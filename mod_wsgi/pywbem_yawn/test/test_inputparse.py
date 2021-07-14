@@ -50,10 +50,10 @@ class InputParseTest(unittest.TestCase):
 
     def test_iname_str2pywbem_correct_path3(self):
         path = iname_str2pywbem(props,
-                'StringProperty="short , \\"= string"')
+                'AnyClass.StringProperty="short , \\"= string"')
         self.assertIsInstance(path, pywbem.CIMInstanceName)
         self.assertIs(None, path.namespace)
-        self.assertIs(None, path.classname)
+        self.assertEqual("AnyClass", path.classname)
         self.assertIsInstance(path.keybindings, (dict, pywbem.NocaseDict))
         self.assertEqual(1, len(path.keybindings))
         self.assertIn("StringProperty", path)
@@ -61,10 +61,10 @@ class InputParseTest(unittest.TestCase):
 
     def test_iname_str2pywbem_correct_path4(self):
         path = iname_str2pywbem(props,
-                """Uint16Property=0""")
+                """AnyClass.Uint16Property=0""")
         self.assertIsInstance(path, pywbem.CIMInstanceName)
         self.assertIs(None, path.namespace)
-        self.assertIs(None, path.classname)
+        self.assertEqual("AnyClass", path.classname)
         self.assertIsInstance(path.keybindings, (dict, pywbem.NocaseDict))
         self.assertEqual(1, len(path.keybindings))
         self.assertIn("Uint16Property", path)

@@ -18,6 +18,7 @@
 """
 Custom URL converters to obtain information from parts of url.
 """
+import six
 
 from pywbem_yawn import inputparse
 from pywbem_yawn import render
@@ -50,12 +51,12 @@ class Base64Converter(BaseConverter):
                       r'==|[A-Za-z0-9_-]{3}=)?')
 
     def to_python(self, value):
-        if isinstance(value, unicode):
+        if isinstance(value, six.text_type):
             value = value.encode('utf-8')
         return inputparse.decode_reference(value)
 
     def to_url(self, value):
-        if isinstance(value, basestring):
+        if isinstance(value, (six.binary_type, six.text_type)):
             return value
         return render.encode_reference(value)
 

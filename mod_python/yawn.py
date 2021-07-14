@@ -174,9 +174,9 @@ def DeleteInstance(req, url, ns, instPath):
     try:
         conn.DeleteInstance(instName)
     # TODO make this use _ex()
-    except pywbem.cim_http.AuthError, arg:
+    except pywbem._cim_http.AuthError as arg:
         raise apache.SERVER_RETURN, apache.HTTP_UNAUTHORIZED
-    except pywbem.CIMError, arg:
+    except pywbem.CIMError as arg:
         req.write( _printHead('Error Deleting instance of '+instName.classname))
         req.write( 'Deleting instance of '+instName.classname+
                    ' returned the following error:<br> <i>(' + `arg[0]` +
@@ -399,7 +399,7 @@ def FilteredReferenceNames(req, url, ns, instPath, assocClass, resultClass,
                 assocInstPath = refName
                 req.write('<hr><h2>Objects of Class: ' + assocInstPath.classname + '</h2>')
                 _printInstanceNames(req, urlargs, [assocInstPath])
-    except pywbem.cim_http.AuthError, arg:
+    except pywbem._cim_http.AuthError as arg:
         raise apache.SERVER_RETURN, apache.HTTP_UNAUTHORIZED
 
     return '</body></html>'
@@ -765,10 +765,10 @@ def _createOrModifyInstance(req, conn, url, ns, className, instName, **params):
                         else:
                             propVal = propVal.split(",")
                             propVal = [x.strip() for x in propVal]
-                    propVal = [pywbem.tocimobj(dt, x) for x in propVal]
+                    propVal = [pywbem.cimvalue(x, dt) for x in propVal]
                     inst.properties[propName] = propVal
                 else:
-                    inst.properties[propName] = pywbem.tocimobj(dt, propVal)
+                    inst.properties[propName] = pywbem.cimvalue(propVal, dt)
     if instName:
         if instName.namespace is None: 
             instName.namespace = ns
@@ -928,7 +928,7 @@ def _displayInstanceMod(req, conn, url, ns, klass, oldInstPathPair = None, getIn
                 # skip valuemap items that aren't valid values
                 # such as the numeric ranges for DMTF Reserved and whatnot
                 try:
-                    pywbem.tocimobj(prop.type, curVal)
+                    pywbem.cimvalue(curVal, prop.type)
                 except:
                     continue
                 ht+= '<option value="'+curVal+'"'
@@ -1099,13 +1099,13 @@ def InvokeMethod(req, url, ns, objPath, method, **params):
                     if metaParm.reference_class is not None:
                         paramVal = [_decodeObject(x) for x in paramVal]
                     else:
-                        paramVal = [pywbem.tocimobj(dt[:-2], x) for x in paramVal]
+                        paramVal = [pywbem.cimvalue(x, dt[:-2]) for x in paramVal]
                     inParms[paramName] = paramVal
                 else:
                     if metaParm.reference_class is not None:
                         inParms[paramName] = _decodeObject(paramVal)
                     else:
-                        inParms[paramName] = pywbem.tocimobj(dt, paramVal)
+                        inParms[paramName] = pywbem.cimvalue(paramVal, dt)
         ht+= '</table>'
 
     (rval, outParms) = _ex(req,conn.InvokeMethod,MethodName=method, ObjectName=lobjPath, **inParms)
@@ -1318,7 +1318,7 @@ def PrepMethod(req, url, ns, objPath, method):
                     # skip valuemap items that aren't valid values
                     # such as the numeric ranges for DMTF Reserved and whatnot
                     try:
-                        pywbem.tocimobj(param.type, curVal)
+                        pywbem.cimvalue(curVal, param.type)
                     except:
                         continue
                     ht+= '<option value="'+curVal+'">'+curVal
@@ -1407,9 +1407,9 @@ def MofComp(req, url, ns, file, text):
 def _ex(req, method, **params):
     try:
         return method(**params)
-    except pywbem.cim_http.AuthError, arg:
+    except pywbem._cim_http.AuthError as arg:
         raise apache.SERVER_RETURN, apache.HTTP_UNAUTHORIZED
-    except pywbem.CIMError, arg:
+    except pywbem.CIMError as arg:
         ht = _printHead('Error')
         details = _code2string(arg[0])
         ht+= '<p><i>'+details[0]+': ' + details[1]+'</i>'
@@ -2089,9 +2089,9 @@ def EnumNamespaces(req, url):
             for interopns in ['root/cimv2', 'Interop', 'interop', 'root', 'root/interop']:
                 try:
                     nsinsts = conn.EnumerateInstanceNames(nsclass, namespace = interopns)
-                except pywbem.cim_http.AuthError, arg:
+                except pywbem._cim_http.AuthError as arg:
                     raise apache.SERVER_RETURN, apache.HTTP_UNAUTHORIZED
-                except pywbem.CIMError, arg:
+                except pywbem.CIMError as arg:
                     if arg[0] in [pywbem.CIM_ERR_INVALID_NAMESPACE,
                                   pywbem.CIM_ERR_NOT_SUPPORTED,
                                   pywbem.CIM_ERR_INVALID_CLASS]:
@@ -2104,7 +2104,7 @@ def EnumNamespaces(req, url):
             if len(nsinsts) == 0:
                 continue
             break
-    except pywbem.CIMError, arg:
+    except pywbem.CIMError as arg:
         ht = _printHead('Error')
         details = _code2string(arg[0])
         ht+= '<i>'+details[0]+': '+details[1]+': '+cgi.escape(arg[1])+'</i>'

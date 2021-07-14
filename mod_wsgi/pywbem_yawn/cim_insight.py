@@ -169,7 +169,7 @@ def _get_property_details(prop, inst=None):
             values_quals = prop.qualifiers['values'].value
         for ivq, val in enumerate(valmap_quals):
             try:
-                pywbem.tocimobj(prop.type, val)
+                pywbem.cimvalue(val, prop.type)
             except Exception:
                 # skip valuemap items that aren't valid values
                 # such as the numeric ranges for DMTF Reserved and whatnot
