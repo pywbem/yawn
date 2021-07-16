@@ -252,12 +252,12 @@ def val2str(value):
                 if i > 0:
                     rval += ', '
                 str_item = val2str(item)
-                if type(item) in types.StringTypes:
+                if type(item) == str:
                     str_item = '"' + str_item + '"'
                 rval += str_item
         rval += '}'
         return rval
-    return unicode(value)
+    return str(value)
 
 def mapped_value2str(val, quals):
     """

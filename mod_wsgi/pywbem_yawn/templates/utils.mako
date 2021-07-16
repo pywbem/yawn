@@ -10,7 +10,7 @@
     target = markupsafe.escape(target)
   linkargs = {'href':urls.build(func, kwargs) + append}
   if len(classes):
-    if isinstance(classes, basestring):
+    if isinstance(classes, str):
       linkargs['class'] = classes
     else:
       linkargs['class'] = ' '.join(classes)
@@ -48,7 +48,7 @@
 </%def>\
 
 <%def name="print_data_type(p)"><%
-  if isinstance(p, basestring):
+  if isinstance(p, str):
     res = p
   elif p is None or p['type'] is None:
     res = 'void'
@@ -133,7 +133,7 @@
 
 <%def name="make_elem(elem_name, css, description=None, terminated=False, **kwargs)"><%
   args = []
-  if not isinstance(css, basestring):
+  if not isinstance(css, str):
     if len(css): css = ' '.join(css)
   if css:
     args.append('class="%s"' % css)
@@ -585,10 +585,10 @@
           value_orig = 'null'
         else:
           if isinstance(p['value_orig'], list):
-            value_orig = [(v.encode('utf-8') if isinstance(v, unicode) else str(v)) for v in p['value_orig']]
+            value_orig = [(v.encode('utf-8') if isinstance(v, str) else str(v)) for v in p['value_orig']]
           else:
             value_orig = p['value_orig']
-            if isinstance('value_orig', unicode):
+            if isinstance('value_orig', str):
               value_orig = value_orig.encode('utf-8')
           value_orig = '"%s"'%markupsafe.escape(p['value_orig'])
       %>

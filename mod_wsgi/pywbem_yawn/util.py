@@ -25,6 +25,12 @@ import re
 
 _RE_URL_FUNC = re.compile(r'^[A-Z][a-z_A-Z0-9]+$')
 
+
+def cmp(a, b):
+    # Python 2 function.
+    return 1 if a > b else -1 if a < b else 0
+
+
 def cmp_pnames(klass):
     """
     Wrapper for comparing function for class property names, which
@@ -37,8 +43,8 @@ def cmp_pnames(klass):
         keys before non-keys
         """
         is_key = lambda key: (
-                    klass and klass.properties.has_key(key)
-                and klass.properties[key].qualifiers.has_key('key'))
+                    klass and key in klass.properties
+                and 'key' in klass.properties[key].qualifiers)
         is_key_a = is_key(aname)
         is_key_b = is_key(bname)
         if is_key_a and is_key_b:

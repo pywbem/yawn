@@ -65,13 +65,13 @@ def _val2str(x):
                 if i > 0:
                     rval+= ', '
                 strItem = _val2str(item)
-                if type(item) in types.StringTypes:
+                if type(item) == str:
                     strItem = '"' + strItem + '"'
                 rval+= strItem
         rval+= '}'
         return cgi.escape(rval)
     else:
-        return cgi.escape(unicode(x))
+        return cgi.escape(str(x))
 
 ##############################################################################
 _status_codes = [('', '') 
@@ -105,8 +105,8 @@ def _sortkey(keylist, klass):
 
     def keycmp(a, b):
         def is_key(key):
-            klassProp = klass.properties.has_key(key) and klass.properties[key] or None
-            return klassProp and klassProp.qualifiers.has_key('key')
+            klassProp = (key in klass.properties) and klass.properties[key] or None
+            return klassProp and 'key' in klassProp.qualifiers
         is_key_a = is_key(a)
         is_key_b = is_key(b)
         if is_key_a and is_key_b:
@@ -511,11 +511,11 @@ def _displayInstance(req, inst, instName, klass, urlargs):
     haveRequiredProps = False
     for key in keys:
         prop = inst.properties[key]
-        klassProp = klass.properties.has_key(key) and klass.properties[key] or None
-        propIsKey = klassProp and klassProp.qualifiers.has_key('key')
-        propIsRequired = klassProp and klassProp.qualifiers.has_key('required')
+        klassProp = (key in klass.properties) and klass.properties[key] or None
+        propIsKey = klassProp and ('key' in klassProp.qualifiers)
+        propIsRequired = klassProp and ('required' in klassProp.qualifiers)
         propTitle = ''
-        if klassProp and klassProp.qualifiers.has_key('description'):
+        if klassProp and ('description' in klassProp.qualifiers):
             propTitle = klassProp.qualifiers['description'].value
         ht+= '<tr'
         if propIsKey:
@@ -539,7 +539,7 @@ def _displayInstance(req, inst, instName, klass, urlargs):
         ht+= '</td><td title="'+cgi.escape(propTitle)+'">'+_makeHref(req, 'GetClass', class_urlargs, key, '#'+key.lower())+'</td><td>'
 
 
-        if klassProp and klassProp.qualifiers.has_key('values') and klassProp.qualifiers.has_key('valuemap'):
+        if klassProp and ('values' in klassProp.qualifiers) and ('valuemap' in klassProp.qualifiers):
             ht+= _displayMappedValue(prop.value, klassProp.qualifiers)
         elif klassProp and klassProp.reference_class is not None:
             ns = _val2str(inst[key].namespace)
@@ -875,10 +875,10 @@ def _displayInstanceMod(req, conn, url, ns, klass, oldInstPathPair = None, getIn
     ht+= '</tr>'
     for propName in propNames:
         prop = klass.properties[propName]
-        propIsKey = prop.qualifiers.has_key('key')
-        propIsRequired = prop.qualifiers.has_key('required')
+        propIsKey = 'key' in prop.qualifiers
+        propIsRequired = 'required' in prop.qualifiers
         propTitle = ''
-        if prop.qualifiers.has_key('description'):
+        if 'description' in prop.qualifiers:
             propTitle = prop.qualifiers['description'].value
         ht+= '<tr'
         if propIsKey:
@@ -899,15 +899,15 @@ def _displayInstanceMod(req, conn, url, ns, klass, oldInstPathPair = None, getIn
         fPropName = 'PropName.'+prop.name
         oldVal = None
         if oldInst is not None:
-            if oldInst.properties.has_key(propName):
+            if propName in oldInst.properties:
                 oldVal = oldInst.properties[propName].value
-        if prop.qualifiers.has_key('valuemap'):
+        if 'valuemap' in prop.qualifiers:
             if type(oldVal) == list:
                 oldVal = [str(x) for x in oldVal]
             needComboBox = True
             valmapQual = prop.qualifiers['valuemap'].value
             valuesQual = None
-            if prop.qualifiers.has_key('values'):
+            if 'values' in prop.qualifiers:
                 valuesQual = prop.qualifiers['values'].value
 
             # Disable the combobox for now, because it isn't working, and
@@ -1119,7 +1119,7 @@ def InvokeMethod(req, url, ns, objPath, method, **params):
             isRef = metaParm.reference_class is not None
             dt = type_str(metaParm)
             ht+= '<tr><td>'+dt+'</td><td>'+metaParm.name+'</td><td>'
-            if metaParm.qualifiers.has_key('values') and metaParm.qualifiers.has_key('valuemap'):
+            if 'values' in metaParm.qualifiers and 'valuemap' in metaParm.qualifiers:
                 display = str(parm)
                 valmapQual = metaParm.qualifiers['valuemap'].value
                 valuesQual = metaParm.qualifiers['values'].value
@@ -1242,9 +1242,9 @@ def PrepMethod(req, url, ns, objPath, method):
     outParms = []
     for param in cimmethod.parameters.values():
         # TODO is IN assumed to be true if the IN qualifier is missing?
-        if not param.qualifiers.has_key('in') or param.qualifiers['in'].value:
+        if not 'in' in param.qualifiers or param.qualifiers['in'].value:
             inParms.append(param)
-        if param.qualifiers.has_key('out') and param.qualifiers['out'].value:
+        if 'out' in param.qualifiers and param.qualifiers['out'].value:
             outParms.append(param)
 
 
@@ -1273,7 +1273,7 @@ def PrepMethod(req, url, ns, objPath, method):
         ht+= '<tr bgcolor="#CCCCCC"><th>Data Type</th><th>Param Name</th><th>Value</th></tr>'
         for param in inParms:
             ht+= '<tr valign=top'
-            if param.qualifiers.has_key('required') and param.qualifiers['required'].value:
+            if 'required' in param.qualifiers and param.qualifiers['required'].value:
                 ht+= ' bgcolor="#FFDDDD"'
                 someRequired = True
 
@@ -1286,18 +1286,18 @@ def PrepMethod(req, url, ns, objPath, method):
                 ht+= ' [ ]'
             ht+= '</td>'
             ht+= '<td'
-            if param.qualifiers.has_key('description'):
+            if 'description' in param.qualifiers:
                 ht+= ' title="'+cgi.escape(param.qualifiers['description'].value)+'"'
             ht+= '>'
             ht+= param.name
             ht+= '</td><td>'
             # avoid name collisions, in case some param is called ns, url, etc.
             parmName = 'MethParm.'+param.name
-            if param.qualifiers.has_key('valuemap'):
+            if 'valuemap' in param.qualifiers:
                 needComboBox = True
                 valmapQual = param.qualifiers['valuemap'].value
                 valuesQual = None
-                if param.qualifiers.has_key('values'):
+                if 'values' in param.qualifiers:
                     valuesQual = param.qualifiers['values'].value
 
                 # Disable the combobox for now, because it isn't working, and
@@ -1363,7 +1363,7 @@ def PrepMethod(req, url, ns, objPath, method):
             if param.is_array:
                 ht+= ' [ ]'
             ht+= '</td><td'
-            if param.qualifiers.has_key('description'):
+            if 'description' in param.qualifiers:
                 ht+= ' title="'+cgi.escape(param.qualifiers['description'].value)+'"'
             ht+= '>'+param.name+'</td></tr>'
         ht+= '</table>'
@@ -1479,9 +1479,9 @@ def GetClass(req, url, ns, className):
                'CMPIProvider', instUrlArgs, 'CMPI Provider')
     ht+= '</div>'
     ht+= '<table border="1" cellpadding="2">'
-    if klass.qualifiers.has_key('aggregation'):
+    if 'aggregation' in klass.qualifiers:
         titleBGColor = "green"
-    elif klass.qualifiers.has_key('association'):
+    elif 'association' in klass.qualifiers:
         titleBGColor = "red"
     else:
         titleBGColor = "black"
@@ -1494,7 +1494,7 @@ def GetClass(req, url, ns, className):
         ht+= '<b>Superclass: '+_makeHref(req, 'GetClass', gcUrlArgs, klass.superclass)+'</font></b>'
     ht+= '</td></tr>'
     ht+= '<tr><td colspan="2"><table width="100%">'
-    if klass.qualifiers.has_key('description'):
+    if 'description' in klass.qualifiers:
         ht+= '<tr><td colspan="3">'
         ht+= cgi.escape(klass.qualifiers['description'].value)
         ht+= '</td></tr>'
@@ -1531,11 +1531,11 @@ def GetClass(req, url, ns, className):
 
     for item in localItems + nonLocalItems:
         desc = None
-        if item.qualifiers.has_key('description'):
+        if 'description' in item.qualifiers:
             desc = item.qualifiers['description'].value
             del item.qualifiers['description']
-        deprecated = item.qualifiers.has_key('deprecated')
-        key = item.qualifiers.has_key('key')
+        deprecated = 'deprecated' in item.qualifiers
+        key = 'key' in item.qualifiers
         if 'class_origin' in dir(item):
             local = item.class_origin == className
         else:
@@ -1580,7 +1580,7 @@ def GetClass(req, url, ns, className):
                 ht+= '<table cellpadding="0" 0="1" width="100%">'
                 for param in item.parameters.values():
                     pdesc = None
-                    if param.qualifiers.has_key('description'):
+                    if 'description' in param.qualifiers:
                         pdesc = param.qualifiers['description'].value
                         del param.qualifiers['description']
                     ht+= '<tr>'
@@ -1659,7 +1659,7 @@ def _getConn(req, url, ns):
     if pw is None:
         pw = ''
     cookies = Cookie.get_cookies(req)
-    if len(user) > 0 and cookies.has_key('yawn_logout'):
+    if len(user) > 0 and 'yawn_logout' in cookies:
         if cookies['yawn_logout'].value in ['true','pending']:
             #
             # modpython.Cookie.add_cookie() only adds to req.headers_out
@@ -1690,7 +1690,7 @@ def _printEnumDeep(req, curclass, dict, urlargs, level = 0):
     classNames = dict[curclass]
     classNames.sort()
     for className in classNames:
-        hasKids = dict.has_key(className)
+        hasKids = className in dict
         ht = '<tr'
         if req.color:
             req.color = False
@@ -1978,7 +1978,7 @@ def AssociatedClasses(req, url, ns, className):
             if prop.reference_class is not None:
                 refClass = prop.reference_class
                 description = ''
-                if prop.qualifiers.has_key('description'):
+                if 'description' in prop.qualifiers:
                     description = prop.qualifiers['description'].value
 
                 if refClass in hierarchy:

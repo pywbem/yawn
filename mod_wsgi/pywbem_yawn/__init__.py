@@ -42,6 +42,7 @@ import mako
 import mako.lookup
 import pkg_resources
 import traceback
+import functools
 from collections import defaultdict, namedtuple
 from itertools import chain
 from werkzeug.wrappers import Response, Request
@@ -235,6 +236,8 @@ class Yawn(object):
         """
         url = self._local.url
         namespace  = self._local.namespace
+        if isinstance(namespace, bytes):
+            namespace = namespace.decode()
         verify = getattr(self._local, 'verify', True)
         if (   hasattr(self._local, 'connection')
            and self._local.connection.url == url
@@ -249,7 +252,7 @@ class Yawn(object):
         if password is None:
             password = ''
         if (   len(user) > 0
-           and req.cookies.has_key('yawn_logout')):
+           and 'yawn_logout' in req.cookies):
             if req.cookies['yawn_logout'] in ['true', 'pending']:
                 self.response.set_cookie('yawn_logout', 'false',
                         path=util.base_script(req))
@@ -273,11 +276,14 @@ class Yawn(object):
         @return Renderer context manager object.
         @see Renderer
         """
+        url = getattr(self._local, 'url', None)
+        if url and isinstance(url, bytes):
+            url = url.decode()
         render_kwargs = {
                 'urls'   : self.urls,
                 'static' : self.static_prefix,
                 'conn'   : getattr(self._local, 'connection', None),
-                'url'    : getattr(self._local, 'url', None),
+                'url'    : url,
                 'ns'     : getattr(self._local, 'namespace', None),
               }
         if      (   render_kwargs['url']
@@ -331,7 +337,8 @@ class Yawn(object):
             response.data = unresp.data
             return response(environ, start_response)
 
-        except Exception:
+        except Exception as exc:
+            _LOG.debug("In __call__: Exception:" + str(exc))
             # this is a fallback for any unhandled exception
             if not self._debug:
                 output = traceback.format_exc()
@@ -523,7 +530,7 @@ class Yawn(object):
                         continue
                     refcls = prop.reference_class
                     description = ''
-                    if prop.qualifiers.has_key('description'):
+                    if 'description' in prop.qualifiers:
                         description = prop.qualifiers['description'].value
 
                     if refcls in hierarchy:
@@ -897,9 +904,9 @@ class Yawn(object):
                     IncludeClassOrigin=True,
                     IncludeQualifiers=True)
             renderer['super_class'] = klass.superclass
-            renderer['aggregation'] = klass.qualifiers.has_key('aggregation')
-            renderer['association'] = klass.qualifiers.has_key('association')
-            if klass.qualifiers.has_key('description'):
+            renderer['aggregation'] = 'aggregation' in klass.qualifiers
+            renderer['association'] = 'association' in klass.qualifiers
+            if 'description' in klass.qualifiers:
                 renderer['description'] = klass.qualifiers['description'].value
             else:
                 renderer['description'] = None
@@ -915,7 +922,9 @@ class Yawn(object):
                              , klass.properties.values()):
                 items.append(cim_insight.get_class_item_details(
                     className, item))
-            renderer['items'] = sorted(items, util.cmp_params(klass))
+            # This is simply ported from Python 2, but can be faster by rewriting the key function.
+            renderer['items'] = sorted(items, key=functools.cmp_to_key(util.cmp_params(klass)))
+
         return renderer.result
 
     @views.html_view(http_method=views.GET_AND_POST)
@@ -988,7 +997,7 @@ class Yawn(object):
             items = [    cim_insight.get_class_item_details(className, i)
                 for i in sorted( klass.properties.values()
                                , key=lambda a: a.name)
-                if  i.qualifiers.has_key('key') ]
+                if  'key' in i.qualifiers ]
             renderer['items'] = items
         return renderer.result
 
@@ -1068,8 +1077,8 @@ class Yawn(object):
             out = cim_insight.get_class_item_details(
                     className, cimmethod, path)
             out['value_orig'] = rval
-            if (   cimmethod.qualifiers.has_key('values')
-               and cimmethod.qualifiers.has_key('valuemap')):
+            if (   'values' in cimmethod.qualifiers
+               and 'valuemap' in cimmethod.qualifiers):
                 out['value'] = render.mapped_value2str(
                         rval, cimmethod.qualifiers)
             elif isinstance(out['type'], dict):
@@ -1091,6 +1100,7 @@ class Yawn(object):
         enumeration of namespaces or class names, depending on user's
         arguments.
         """
+        _LOG.debug("In on_Login")
         try:
             scheme, host, port = [kwargs[k] for k in (
                 "scheme", "host", "port")]
@@ -1215,7 +1225,7 @@ class Yawn(object):
             query = self._local.request.form["query"]
         if isinstance(lang, int):
             lang = QLangConverter.query_languages[QLangConverter.QLANG_WQL]
-        elif isinstance(lang, basestring):
+        elif isinstance(lang, str):
             if not lang in QLangConverter.query_languages:
                 raise ValueError("lang must be one of: {}".format(
                     QLangConverter.query_languages))

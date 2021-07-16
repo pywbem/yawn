@@ -97,7 +97,7 @@ def _get_default_attributes_dict(name, **kwargs):
     @return dictionary with default properties of any attribute
     of CIM class, instance or instance name
     """
-    if not isinstance(name, basestring):
+    if not isinstance(name, str):
         raise TypeError("name must be string")
     res = { 'name'         : name
           , 'is_deprecated': False
@@ -141,10 +141,10 @@ def _get_property_details(prop, inst=None):
     value = _get_prop_value(prop, inst)
 
     res = _get_default_attributes_dict(prop.name,
-            is_deprecated = prop.qualifiers.has_key('deprecated'),
-            is_required   = prop.qualifiers.has_key('required'),
-            is_valuemap   = prop.qualifiers.has_key('valuemap'),
-            is_key     = prop.qualifiers.has_key('key'),
+            is_deprecated = 'deprecated' in prop.qualifiers,
+            is_required   = 'required' in prop.qualifiers,
+            is_valuemap   = 'valuemap' in prop.qualifiers,
+            is_key     = 'key' in prop.qualifiers,
             type       = _get_prop_type(prop, inst),
             value_orig = value)
 
@@ -153,19 +153,19 @@ def _get_property_details(prop, inst=None):
         res['array_size'] = prop.array_size
 
     if value is not None:
-        if (   prop.qualifiers.has_key('values')
-           and prop.qualifiers.has_key('valuemap')):
+        if (   'values' in prop.qualifiers
+           and 'valuemap' in prop.qualifiers):
             res['value'] = render.mapped_value2str(value, prop.qualifiers)
         elif prop.reference_class is not None:
             res['value'] = value
         else:
             res['value'] = render.val2str(value)
 
-    if prop.qualifiers.has_key('valuemap'):
+    if 'valuemap' in prop.qualifiers:
         res['is_valuemap'] = True
         valmap_quals = prop.qualifiers['valuemap'].value
         values_quals = None
-        if prop.qualifiers.has_key('values'):
+        if 'values' in prop.qualifiers:
             values_quals = prop.qualifiers['values'].value
         for ivq, val in enumerate(valmap_quals):
             try:
@@ -181,13 +181,13 @@ def _get_property_details(prop, inst=None):
                 res['values'][val] = None
 
     if isinstance(prop, pywbem.CIMParameter):
-        res['out'] = (   prop.qualifiers.has_key('out')
+        res['out'] = (   'out' in prop.qualifiers
                      and prop.qualifiers['out'].value)
         # consider parameter as input if IN qualifier is missing and
         # it is not an output parameter
-        res['in'] = (  (   prop.qualifiers.has_key('in')
+        res['in'] = (  (   'in' in prop.qualifiers
                        and prop.qualifiers['in'].value)
-                    or (   not prop.qualifiers.has_key
+                    or (   'out' in prop.qualifiers
                        and not res['out']))
     return res
 
@@ -197,7 +197,7 @@ def get_class_item_details(class_name, item, inst=None):
         CIMProperty, CIMMethod, CIMParameter }
     @param inst provides some additional info (if given)
     """
-    if not isinstance(class_name, basestring):
+    if not isinstance(class_name, str):
         raise TypeError('class_name must be a string')
     if not isinstance(item, (pywbem.CIMProperty, pywbem.CIMMethod,
             pywbem.CIMParameter)):
@@ -209,10 +209,10 @@ def get_class_item_details(class_name, item, inst=None):
             ', CIMInstance or None')
 
     res = _get_default_attributes_dict(item.name,
-            is_deprecated = item.qualifiers.has_key('deprecated'),
+            is_deprecated = 'deprecated' in item.qualifiers,
             is_method     = isinstance(item, pywbem.CIMMethod),
-            is_required   = item.qualifiers.has_key('required'),
-            is_valuemap   = item.qualifiers.has_key('valuemap'))
+            is_required   = 'required' in item.qualifiers,
+            is_valuemap   = 'valuemap' in item.qualifiers)
 
     if isinstance(item, (pywbem.CIMProperty, pywbem.CIMParameter)):
         res.update(_get_property_details(item, inst))
@@ -225,7 +225,7 @@ def get_class_item_details(class_name, item, inst=None):
     if hasattr(item, 'class_origin'):
         res['is_local'] = item.class_origin == class_name
         res['class_origin'] = item.class_origin
-    if item.qualifiers.has_key('description'):
+    if 'description' in item.qualifiers:
         res['description'] = item.qualifiers['description'].value
     else:
         res['description'] = None
@@ -292,12 +292,12 @@ def get_class_props(klass=None, inst=None, include_all=False, keys_only=False):
            and prop_name in inst.properties):
             iprop = inst.properties[prop_name]
             if (  keys_only
-               and not iprop.qualifiers.has_key('key')
+               and not 'key' in iprop.qualifiers
                and not prop_name in inst.path):
                 continue
         cprop = (  klass.properties[prop_name]
-                if klass and klass.properties.has_key(prop_name) else None)
-        if keys_only and cprop and not cprop.qualifiers.has_key('key'):
+                if klass and prop_name in klass.properties else None)
+        if keys_only and cprop and not 'key' in cprop.qualifiers:
             continue
         if cprop is not None:
             item = get_class_item_details(klass.classname, cprop, inst)
