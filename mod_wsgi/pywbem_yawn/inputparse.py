@@ -36,6 +36,7 @@ class ReferenceDecodeError(ValueError):
             key = ' for key "%s"' % key
         else:
             key = ''
+        if path is not None:
             path = ' "%s"' % str(path)
         else:
             path = ''
