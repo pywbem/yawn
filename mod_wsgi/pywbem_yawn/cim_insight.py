@@ -20,6 +20,7 @@ Defines functions for obtaining information from pywbem objects.
 YAWN represents CIM objects as dictionaries. These functions make the
 transformation to them.
 """
+import functools
 
 import pywbem
 from pywbem_yawn import render
@@ -283,7 +284,7 @@ def get_class_props(klass=None, inst=None, include_all=False, keys_only=False):
             keys.update(set(klass.properties.keys()))
     else:
         keys = klass.properties.keys()
-    keys = sorted(keys, util.cmp_pnames(klass))
+    keys = sorted(keys, key=functools.cmp_to_key(util.cmp_pnames(klass)))
 
     props = []
     for prop_name in keys:
