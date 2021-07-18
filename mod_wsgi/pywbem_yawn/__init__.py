@@ -236,8 +236,6 @@ class Yawn(object):
         """
         url = self._local.url
         namespace  = self._local.namespace
-        if isinstance(namespace, bytes):
-            namespace = namespace.decode()
         verify = getattr(self._local, 'verify', True)
         if (   hasattr(self._local, 'connection')
            and self._local.connection.url == url
@@ -1117,7 +1115,7 @@ class Yawn(object):
             url += ':'+port
         if host[0] == '/':
             url = host
-        namespace = namespace.decode()
+        assert isinstance(namespace, str)
         self._local.url = url
         self._local.namespace = namespace
         self._local.verify = ssl_verify
@@ -1233,6 +1231,7 @@ class Yawn(object):
             raise TypeError("lang must be either string or integer not: {}".
                     format(lang.__class__.__name__))
 
+        assert isinstance(self._local.namespace, str)
         with self.renderer('query.mako', qlang=lang, query=query) as renderer:
             insts = conn.ExecQuery(QueryLanguage=lang,
                     Query=query, namespace=self._local.namespace)
@@ -1287,6 +1286,7 @@ class Yawn(object):
             oldns = path.namespace
             path.namespace = None
             refs = conn.ReferenceNames(ObjectName=path)
+            assert isinstance(self._local.namespace, str)
             path.namespace = (  oldns is not None and oldns
                              or self._local.namespace)
 
@@ -1362,6 +1362,7 @@ class Yawn(object):
         instance names as json objects.
         """
         query = self._local.request.args['query']
+        assert isinstance(self._local.namespace, str)
         insts = self.conn.ExecQuery(QueryLanguage='WQL',
                 Query=query, namespace=self._local.namespace)
         self.response.headers["content-type"] = "application/json"
