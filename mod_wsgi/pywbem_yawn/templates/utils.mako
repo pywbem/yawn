@@ -585,11 +585,11 @@
           value_orig = 'null'
         else:
           if isinstance(p['value_orig'], list):
-            value_orig = [(v.encode('utf-8') if isinstance(v, str) else str(v)) for v in p['value_orig']]
+            value_orig = [(v.decode() if isinstance(v, bytes) else str(v)) for v in p['value_orig']]
           else:
             value_orig = p['value_orig']
-            if isinstance('value_orig', str):
-              value_orig = value_orig.encode('utf-8')
+            if isinstance('value_orig', bytes):
+              value_orig = value_orig.decode()
           value_orig = '"%s"'%markupsafe.escape(p['value_orig'])
       %>
       "${prefix.lower()}${p['name'].lower()}" : {
