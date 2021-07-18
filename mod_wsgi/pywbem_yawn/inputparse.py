@@ -24,7 +24,6 @@ import pickle
 import pywbem
 import re
 import zlib
-import six
 
 class ReferenceDecodeError(ValueError):
     """
@@ -37,9 +36,6 @@ class ReferenceDecodeError(ValueError):
             key = ' for key "%s"' % key
         else:
             key = ''
-        if path is not None:
-            if isinstance(path, six.text_type):
-                path = path.encode('utf-8')
             path = ' "%s"' % str(path)
         else:
             path = ''
@@ -266,6 +262,7 @@ def formvalue2iname(param, prefix, formdata, suffix='', pop_used=False,
         try:
             if isinstance(value, str):
                 value = value.encode('utf-8')
+            assert isinstance(value, str), "formvalue2iname"
             result = decode_reference(value)
         except ReferenceDecodeError:
             raise ReferenceDecodeError(param_name, value)
