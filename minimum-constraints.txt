@@ -139,7 +139,7 @@ safety==1.9.0
 dparse==0.4.1
 
 # PyYAML is pulled in by dparse and python-coveralls
-PyYAML==5.3.1
+PyYAML==5.4
 
 # Tox
 tox==2.5.0
