@@ -24,7 +24,6 @@ import pickle
 import pywbem
 import re
 import zlib
-import six
 
 class ReferenceDecodeError(ValueError):
     """
@@ -38,8 +37,6 @@ class ReferenceDecodeError(ValueError):
         else:
             key = ''
         if path is not None:
-            if isinstance(path, six.text_type):
-                path = path.encode('utf-8')
             path = ' "%s"' % str(path)
         else:
             path = ''
@@ -240,7 +237,7 @@ def formvalue2iname(param, prefix, formdata, suffix='', pop_used=False,
         if pop_used:
             del formdata[name]
         return res
-    if (   formdata.has_key(param_name+'-reftype')
+    if (   param_name+'-reftype' in formdata
        and formdata[param_name+"-reftype"] != 'compressed'):
         namespace = param['type'].get('ns', namespace)
         reftype = get_value(param_name+'-reftype')
@@ -257,15 +254,16 @@ def formvalue2iname(param, prefix, formdata, suffix='', pop_used=False,
                     classname=param['type']['className'],
                     namespace=namespace)
     else:
-        if pop_used and formdata.has_key(param_name+'-reftype'):
+        if pop_used and param_name+'-reftype' in formdata:
             del formdata[param_name+'-reftype']
         value = get_value(param_name)
         if not value:
             return None
         # base64 decode does not properly handle unicode
         try:
-            if isinstance(value, unicode):
+            if isinstance(value, str):
                 value = value.encode('utf-8')
+            assert isinstance(value, str), "formvalue2iname"
             result = decode_reference(value)
         except ReferenceDecodeError:
             raise ReferenceDecodeError(param_name, value)

@@ -28,7 +28,6 @@ import pywbem
 import re
 import types
 import zlib
-import six
 from pywbem_yawn import util
 
 _RE_ERRNO_13 = re.compile(r'^socket\s+error\s*:.*errno\s*13', re.I)
@@ -53,14 +52,21 @@ CIM_ERROR2TEXT = defaultdict(lambda: "OTHER_ERROR", {
     17 : "METHOD_NOT_FOUND"
 })
 
-class SafeString(six.text_type): #pylint: disable=R0924,R0904,C0111
+class SafeString(str):  # pylint: disable=R0924,R0904,C0111
     """
     when this type of string is passed to template, it will be not escaped
     upon rendering if safe param is True
     """
     def __init__(self, text):
-        six.text_type.__init__(self, text)
         self.safe = True
+
+    # https://stackoverflow.com/questions/2673651/inheritance-from-str-or-int
+    # Since __init__ is called after the object is constructed,
+    # it is too late to modify the value for immutable types.
+    # Note that __new__ is a classmethod, so the first parameter is called cls
+    def __new__(cls, txt):
+        return str.__new__(cls, txt)
+
 
 def render_cim_error_msg(err):
     """
@@ -119,7 +125,7 @@ class Renderer(object):
         if not isinstance(lookup, mako.lookup.TemplateLookup):
             raise TypeError("lookup must be an instance of"
                     " mako.lookup.TemplateLookup")
-        if not isinstance(template, (six.binary_type, six.text_type)):
+        if not isinstance(template, (str, bytes)):
             raise TypeError("template must be a string with the"
                     " name of template to render")
         self._debug = debug
@@ -252,12 +258,12 @@ def val2str(value):
                 if i > 0:
                     rval += ', '
                 str_item = val2str(item)
-                if type(item) in types.StringTypes:
+                if type(item) == str:
                     str_item = '"' + str_item + '"'
                 rval += str_item
         rval += '}'
         return rval
-    return unicode(value)
+    return str(value)
 
 def mapped_value2str(val, quals):
     """

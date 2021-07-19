@@ -79,7 +79,7 @@
 
 <%def name="print_cim_error(what)">
   <table id="cim_error" class="${cim_error.lower()}">
-    <tr class="title"><th colspan="2">Broker error</th></tr>
+    <tr class="title"><th colspan="2">Broker error: ${what}</th></tr>
     <tr class="headers">
       <th>Error Code</th><th>Error Description</th>
     </tr>

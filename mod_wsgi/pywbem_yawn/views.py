@@ -22,7 +22,6 @@ as result.
 
 import json
 import logging
-import six
 
 import pywbem
 from werkzeug.exceptions import BadRequest
@@ -40,14 +39,15 @@ def _convert(val, to=str):
     @param to: Type factory.
     """
     if to is bool:
-        return (   isinstance(val, (six.binary_type, six.text_type))
+        return (   isinstance(val, (str, bytes))
                and val.lower() in ('1', 'true', 'y', 'yes', 'on'))
     if to is str:
-        return (    val.encode('utf-8') if isinstance(val, six.text_type)
-               else str(val))
-    if to is six.text_type:
-        return (    val.decode('utf-8') if isinstance(val, str)
-               else six.text_type(val))
+        if isinstance(val, str):
+            return val
+        elif isinstance(val, bytes):
+            return val.decode()
+        else:
+            return str(val)
     return to(val)
 
 COMMON_ARGUMENTS = (
@@ -140,6 +140,7 @@ def html_view(
                             continue
                         value = value[0]
                     kwargs[k] = value
+            assert isinstance(self._local.namespace, str), "_new_f"
             res = func(self, *args, **kwargs)
             if returns_response is True:
                 return res
