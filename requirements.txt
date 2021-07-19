@@ -15,11 +15,10 @@
 
 # Direct dependencies (except pip, setuptools, wheel):
 
-# TODO: Define minimum versions
-pywbem
-mod-wsgi
-Werkzeug
-mako
-MarkupSafe
+pywbem>=1.2.0
+mod-wsgi>=4.7.0
+Werkzeug>=2.0.0
+mako>=1.1.0
+MarkupSafe>=2.0.0
 
 # Indirect dependencies are not specified in this file.
