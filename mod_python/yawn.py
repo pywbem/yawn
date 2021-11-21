@@ -175,11 +175,11 @@ def DeleteInstance(req, url, ns, instPath):
         conn.DeleteInstance(instName)
     # TODO make this use _ex()
     except pywbem._cim_http.AuthError as arg:
-        raise apache.SERVER_RETURN, apache.HTTP_UNAUTHORIZED
+        raise apache.SERVER_RETURN(apache.HTTP_UNAUTHORIZED)
     except pywbem.CIMError as arg:
         req.write( _printHead('Error Deleting instance of '+instName.classname))
         req.write( 'Deleting instance of '+instName.classname+
-                   ' returned the following error:<br> <i>(' + `arg[0]` +
+                   ' returned the following error:<br> <i>(' + repr(arg[0]) +
                    ') : ' + arg[1] + '</i>')
         req.write( '</body></html>')
         return;
@@ -358,7 +358,7 @@ def FilteredReferenceNames(req, url, ns, instPath, assocClass, resultClass,
         if assocCall=='Associators':
             assocs = _ex(req, conn.Associators,ObjectName=instName, 
                          **params)#, properties)
-            req.write('Showing ' + `len(assocs)` + ' resulting object(s). <br><br>')
+            req.write('Showing ' + repr(len(assocs)) + ' resulting object(s). <br><br>')
             for assoc in assocs:
                 assocInstPath = assoc.path
                 assocInst = assoc
@@ -374,7 +374,7 @@ def FilteredReferenceNames(req, url, ns, instPath, assocClass, resultClass,
         elif  assocCall=='Associator Names':
             assocNames = _ex(req, conn.AssociatorNames, ObjectName=instName, 
                              **params)#, properties)
-            req.write('Showing ' + `len(assocNames)` + ' resulting object(s). <br><br>')
+            req.write('Showing ' + repr(len(assocNames)) + ' resulting object(s). <br><br>')
             for assocName in assocNames:
                 assocInstPath = assocName
                 req.write('<hr><h2>Objects of Class: ' + assocInstPath.classname + '</h2>')
@@ -382,7 +382,7 @@ def FilteredReferenceNames(req, url, ns, instPath, assocClass, resultClass,
         elif  assocCall=='References':
             refs = _ex(req,conn.References,ObjectName=instName, 
                        **params)#, properties)
-            req.write('Showing ' + `len(refs)` + ' resulting object(s). <br><br>')
+            req.write('Showing ' + repr(len(refs)) + ' resulting object(s). <br><br>')
             for ref in refs:
                 assocInstPath = ref.path
                 assocInst = ref
@@ -394,13 +394,13 @@ def FilteredReferenceNames(req, url, ns, instPath, assocClass, resultClass,
                 req.write(_displayInstance(req, assocInst, assocInstPath, klass, urlargs))
         elif  assocCall=='Reference Names':
             refNames = _ex(req, conn.ReferenceNames, ObjectName=instName, **params)#, properties)
-            req.write('Showing ' + `len(refNames)` + ' resulting object(s). <br><br>')
+            req.write('Showing ' + repr(len(refNames)) + ' resulting object(s). <br><br>')
             for refName in refNames:
                 assocInstPath = refName
                 req.write('<hr><h2>Objects of Class: ' + assocInstPath.classname + '</h2>')
                 _printInstanceNames(req, urlargs, [assocInstPath])
     except pywbem._cim_http.AuthError as arg:
-        raise apache.SERVER_RETURN, apache.HTTP_UNAUTHORIZED
+        raise apache.SERVER_RETURN(apache.HTTP_UNAUTHORIZED)
 
     return '</body></html>'
 
@@ -709,7 +709,7 @@ def EnumInstances(req, url, ns, className):
     insts = _ex(req,conn.EnumerateInstances,ClassName = className, LocalOnly = False)
     ht = _printHead('Instances of '+className, 'Instances of '+className, req, urlargs=urlargs)
     numInsts = len(insts)
-    msgStart = 'Showing '+`numInsts`+' Instances<br />'
+    msgStart = 'Showing '+repr(numInsts)+' Instances<br />'
     if numInsts == 0:
         msgStart = 'No Instances<br />'
     elif numInsts == 1:
@@ -1161,7 +1161,7 @@ def Query(req, url, ns, lang, query):
     ht+= 'Query Language = '+lang
     ht+= '<br>Query = '+query
     numInsts = len(insts)
-    msgStart = 'Showing '+`numInsts`+' Instances<br />'
+    msgStart = 'Showing '+repr(numInsts)+' Instances<br />'
     if numInsts == 0:
         msgStart = 'No Instances<br />'
     elif numInsts == 1:
@@ -1184,7 +1184,7 @@ def Query(req, url, ns, lang, query):
     insts = _ex(req,conn.EnumerateInstances,ClassName = className, LocalOnly = False)
     ht = _printHead('Instances of '+className, 'Instances of '+className, req, urlargs=urlargs)
     numInsts = len(insts)
-    msgStart = 'Showing '+`numInsts`+' Instances<br />'
+    msgStart = 'Showing '+repr(numInsts)+' Instances<br />'
     if numInsts == 0:
         msgStart = 'No Instances<br />'
     elif numInsts == 1:
@@ -1408,7 +1408,7 @@ def _ex(req, method, **params):
     try:
         return method(**params)
     except pywbem._cim_http.AuthError as arg:
-        raise apache.SERVER_RETURN, apache.HTTP_UNAUTHORIZED
+        raise apache.SERVER_RETURN(apache.HTTP_UNAUTHORIZED)
     except pywbem.CIMError as arg:
         ht = _printHead('Error')
         details = _code2string(arg[0])
@@ -1433,7 +1433,7 @@ def _ex(req, method, **params):
         req.write(ht)
         # see http://tinyurl.com/jjwjz
         req.status = apache.HTTP_OK
-        raise apache.SERVER_RETURN, apache.DONE
+        raise apache.SERVER_RETURN(apache.DONE)
     #except: 
         #fo = open('/tmp/yawn_dump', 'w')
         #fo.write(req.conn.last_reply)
@@ -1621,7 +1621,7 @@ def GetClass(req, url, ns, className):
                     if param.is_array:
                         ht+= ' [ '
                         if param.array_size is not None:
-                            ht+= `param.array_size`
+                            ht+= repr(param.array_size)
                         else:
                             ht+= ' '
                         ht+= ']'
@@ -2090,7 +2090,7 @@ def EnumNamespaces(req, url):
                 try:
                     nsinsts = conn.EnumerateInstanceNames(nsclass, namespace = interopns)
                 except pywbem._cim_http.AuthError as arg:
-                    raise apache.SERVER_RETURN, apache.HTTP_UNAUTHORIZED
+                    raise apache.SERVER_RETURN(apache.HTTP_UNAUTHORIZED)
                 except pywbem.CIMError as arg:
                     if arg[0] in [pywbem.CIM_ERR_INVALID_NAMESPACE,
                                   pywbem.CIM_ERR_NOT_SUPPORTED,
