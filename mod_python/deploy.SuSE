@@ -1,6 +1,6 @@
-NOTE: yawn currently requires the latest pywbem from svn.
+NOTE: yawn currently requires the latest pywbem from github.
 1.  cd /usr/lib/python/site-packages
-2.  svn co https://svn.sourceforge.net/svnroot/pywbem/trunk pywbem
+2.  git clone https://github.com/pywbem/pywbem.git
 
 To deploy on SuSE 10: 
 
